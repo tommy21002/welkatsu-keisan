@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ウエル活計算">
+<meta name="theme-color" content="#F4C534">
+<title>ウエル活5000計算</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* 片手で使う縦1列。上に「残り何円・何pt」の常時パネル、下に「値札を撮る／手入力」の固定ボタン。値札の黄色を差し色に */
+:root{
+  --bg:#F2F3EF; --surface:#FFFFFF; --sunk:#E9EBE6; --ink:#1A2030; --muted:#636A78; --line:#D9DCE0;
+  --tag:#F4C534; --tag-ink:#2B2300;
+  --ok:#1B7F46; --ok-bg:#E1F2E7; --warn:#A86400; --warn-bg:#FBEFD6; --ng:#C4301D; --ng-bg:#FAE2DD;
+  --shadow:0 -6px 24px rgba(26,32,48,.10);
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;
+  --font-num:"Space Grotesk","BIZ UDPGothic",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111419; --surface:#1B1F27; --sunk:#232833; --ink:#EDEFF2; --muted:#9AA1AE; --line:#2E3440;
+  --tag:#F4C534; --tag-ink:#2B2300;
+  --ok:#43C27A; --ok-bg:#16301F; --warn:#F2A93B; --warn-bg:#33270F; --ng:#FF6E5E; --ng-bg:#3A1A16;
+  --shadow:0 -6px 24px rgba(0,0,0,.45); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111419; --surface:#1B1F27; --sunk:#232833; --ink:#EDEFF2; --muted:#9AA1AE; --line:#2E3440;
+  --tag:#F4C534; --tag-ink:#2B2300;
+  --ok:#43C27A; --ok-bg:#16301F; --warn:#F2A93B; --warn-bg:#33270F; --ng:#FF6E5E; --ng-bg:#3A1A16;
+  --shadow:0 -6px 24px rgba(0,0,0,.45); color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{margin:0;color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.55;-webkit-tap-highlight-color:transparent}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:520px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px calc(120px + env(safe-area-inset-bottom,0px))}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--tag);outline-offset:2px}
+
+/* 残高パネル */
+.panel{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:4px 10px}
+.status{border-radius:16px;padding:14px 16px 12px;background:var(--surface);border:2px solid var(--line);display:grid;gap:8px}
+.status[data-state="ok"]{border-color:var(--ok);background:var(--ok-bg)}
+.status[data-state="warn"]{border-color:var(--warn);background:var(--warn-bg)}
+.status[data-state="ng"]{border-color:var(--ng);background:var(--ng-bg)}
+.st-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.st-label{font-size:12px;color:var(--muted);letter-spacing:.06em}
+.st-total{font-size:34px;font-weight:700;line-height:1.1}
+.st-total small{font-size:15px;color:var(--muted);font-weight:500}
+.badge{font-weight:700;font-size:15px;padding:4px 12px;border-radius:999px;background:var(--sunk);white-space:nowrap}
+.status[data-state="ok"] .badge{background:var(--ok);color:#fff}
+.status[data-state="warn"] .badge{background:var(--warn);color:#fff}
+.status[data-state="ng"] .badge{background:var(--ng);color:#fff}
+.bar{height:10px;border-radius:99px;background:var(--sunk);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ok);transition:width .25s}
+.status[data-state="warn"] .bar i{background:var(--warn)}
+.status[data-state="ng"] .bar i{background:var(--ng)}
+.st-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
+.st-grid div{display:flex;justify-content:space-between;gap:6px;font-size:14px}
+.st-grid b{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.st-msg{font-weight:700;font-size:15px}
+.status[data-state="ng"] .st-msg{color:var(--ng)}
+.status[data-state="warn"] .st-msg{color:var(--warn)}
+.status[data-state="ok"] .st-msg{color:var(--ok)}
+
+/* 会計タブ */
+.tabs{display:flex;gap:8px;overflow-x:auto;padding-block:10px 2px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto;border:1.5px solid var(--line);background:var(--surface);border-radius:12px;padding:6px 12px;display:grid;text-align:left;line-height:1.25}
+.tab span{font-size:12px;color:var(--muted)}
+.tab b{font-family:var(--font-num);font-size:15px}
+.tab[aria-selected="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.tab.ng b{color:var(--ng)}
+.tab.add{color:var(--muted);align-content:center;font-weight:700}
+
+/* 商品リスト */
+.list{display:grid;gap:8px;margin-top:10px}
+.item{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center}
+.item .nm{font-weight:700;min-width:0;overflow-wrap:anywhere}
+.item .sub{grid-column:1/2;font-size:13px;color:var(--muted)}
+.item .amt{font-family:var(--font-num);font-weight:700;font-size:18px;text-align:right}
+.item .ctl{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.step{display:flex;align-items:center;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.step button{width:42px;height:38px;border:0;background:var(--sunk);font-size:20px;font-weight:700}
+.step output{min-width:40px;text-align:center;font-family:var(--font-num);font-weight:700;font-size:17px}
+.mini{border:1.5px solid var(--line);background:transparent;border-radius:10px;height:38px;padding:0 12px;font-size:13px}
+.mini.del{color:var(--ng);margin-left:auto}
+.taxchip{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--sunk);color:var(--muted);margin-left:4px;vertical-align:1px}
+
+.empty{border:2px dashed var(--line);border-radius:14px;padding:18px 16px;color:var(--muted);display:grid;gap:6px}
+.empty b{color:var(--ink)}
+.empty ol{margin:0;padding-left:1.3em;display:grid;gap:4px}
+
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+details.settings{margin-top:18px;border-top:1px solid var(--line);padding-top:10px}
+details.settings summary{cursor:pointer;color:var(--muted);font-size:14px}
+.set-grid{display:grid;gap:10px;margin-top:10px}
+.set-grid label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6}
+
+/* 下の固定ボタン */
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);box-shadow:var(--shadow);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.dock-in{max-width:520px;margin:0 auto;display:grid;grid-template-columns:1.4fr 1fr;gap:10px}
+.big{height:62px;border-radius:14px;border:0;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
+.big.cam{background:var(--tag);color:var(--tag-ink)}
+.big.key{background:var(--sunk);border:1.5px solid var(--line)}
+.big:disabled{opacity:.45}
+.big svg{width:24px;height:24px}
+
+/* 追加シート */
+.backdrop{position:fixed;inset:0;background:rgba(10,12,18,.45);z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--surface);border-radius:18px 18px 0 0;max-height:92%;overflow-y:auto;
+  padding:14px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.sheet-in{max-width:520px;margin:0 auto;display:grid;gap:12px}
+.sheet h2{margin:0;font-size:17px}
+.readout{font-size:13px;background:var(--sunk);border-radius:10px;padding:8px 10px;color:var(--muted)}
+.readout b{color:var(--ink)}
+.field{display:grid;gap:4px}
+.field>span{font-size:12px;color:var(--muted)}
+input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
+.price-in{font-family:var(--font-num);font-size:30px;font-weight:700;text-align:right;padding:8px 12px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.seg button{height:42px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700}
+.qty{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.qty button.q{width:50px;height:46px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);font-family:var(--font-num);font-size:19px;font-weight:700}
+.qty button.q[aria-pressed="true"]{background:var(--tag);color:var(--tag-ink);border-color:var(--tag)}
+.qty .step{margin-left:auto}
+.preview{border-radius:12px;padding:10px 12px;font-weight:700;display:grid;gap:2px}
+.preview small{font-weight:400;font-size:13px}
+.preview[data-state="ok"]{background:var(--ok-bg);color:var(--ok)}
+.preview[data-state="warn"]{background:var(--warn-bg);color:var(--warn)}
+.preview[data-state="ng"]{background:var(--ng-bg);color:var(--ng)}
+.sheet-act{display:grid;grid-template-columns:1fr 2fr;gap:10px}
+.sheet-act button{height:54px;border-radius:12px;font-size:17px;font-weight:700;border:1.5px solid var(--line);background:var(--bg)}
+.sheet-act .primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.sheet-act .primary:disabled{opacity:.4}
+
+.busy{display:flex;gap:10px;align-items:center;padding:6px 0}
+.spin{width:22px;height:22px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--tag);animation:sp 0.8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.spin{animation-duration:3s}.bar i{transition:none}}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom,0px));z-index:30;background:var(--ink);color:var(--bg);
+  border-radius:12px;padding:10px 14px;display:flex;gap:14px;align-items:center;font-size:14px;max-width:calc(100% - 32px)}
+.toast button{background:transparent;border:0;color:var(--tag);font-weight:700}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+
+/* バーコード読み取り画面 */
+.scan{position:fixed;inset:0;z-index:40;background:#000;display:grid;grid-template-rows:auto 1fr auto}
+.scan video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.scan-top,.scan-bot{position:relative;z-index:2;color:#fff;background:rgba(0,0,0,.55);
+  padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px))}
+.scan-bot{padding:12px max(16px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.scan-bot button{height:54px;border-radius:12px;border:0;font-size:16px;font-weight:700}
+.scan-bot .close{background:#fff;color:#111}
+.scan-bot .manual{background:var(--tag);color:var(--tag-ink)}
+.scan-frame{position:relative;z-index:1;align-self:center;justify-self:center;width:min(82%,380px);aspect-ratio:2.2/1;border:3px solid var(--tag);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
+.scan-frame::after{content:"";position:absolute;left:8%;right:8%;top:50%;height:2px;background:rgba(244,197,52,.9)}
+.scan-msg{font-size:14px}
+.scan-msg b{font-size:16px}
+.janline{font-size:13px;color:var(--muted)}
+.janline b{font-family:var(--font-num);color:var(--ink)}
+</style>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+</head>
+<body>
+
+
+<div class="wrap">
+  <div class="panel">
+    <section class="status" id="status" data-state="empty" aria-live="polite">
+      <div class="st-top">
+        <div>
+          <div class="st-label" id="stBasket">会計1の合計（税込）</div>
+          <div class="st-total num" id="stTotal">0<small> 円 / 7,500円</small></div>
+        </div>
+        <span class="badge" id="stBadge">まだ0円</span>
+      </div>
+      <div class="bar"><i id="stBar"></i></div>
+      <div class="st-grid">
+        <div><span>使うポイント</span><b id="stPt">0 pt</b></div>
+        <div><span>上限</span><b id="stCap">5,000 pt</b></div>
+      </div>
+      <div class="st-msg" id="stMsg">あと 7,500円分 入れられます</div>
+    </section>
+    <nav class="tabs" id="tabs" aria-label="会計の切り替え"></nav>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <div class="tools" id="basketTools"></div>
+
+  <details class="settings">
+    <summary>設定（上限ポイント・倍率）</summary>
+    <div class="set-grid">
+      <label for="setLimit">1回（1日）の上限ポイント
+        <input id="setLimit" type="number" inputmode="numeric" min="1" step="1" value="5000">
+      </label>
+      <label for="setRate">1ポイントあたりの価値（円）
+        <input id="setRate" type="number" inputmode="decimal" min="1" step="0.1" value="1.5">
+      </label>
+      <div class="confirm" id="resetArea"><button class="mini" id="resetAll" type="button">全部の会計を消す</button></div>
+    </div>
+    <p class="note">計算のしかた：使える金額＝上限ポイント×1ポイントの価値（5,000pt×1.5円＝7,500円）。使うポイント＝合計÷1.5（端数は切り上げ）。税抜で入れた商品は、8%と10%ごとにまとめて税を足し、1円未満を切り捨てます。お店のレジの計算と1〜数円ずれることがあるので、上限ぎりぎりは少し余裕を残してください。</p>
+  </details>
+</div>
+
+<div class="dock">
+  <div class="dock-in">
+    <button class="big cam" id="camBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12"/></svg>
+      バーコード
+    </button>
+    <button class="big key" id="keyBtn" type="button">手入力</button>
+  </div>
+</div>
+
+<section class="scan" id="scan" hidden aria-label="バーコード読み取り">
+  <video id="video" playsinline muted></video>
+  <div class="scan-top"><div class="scan-msg" id="scanMsg"><b>値札か商品のバーコードを枠に入れてください</b></div></div>
+  <div class="scan-frame" aria-hidden="true"></div>
+  <div class="scan-bot">
+    <button type="button" class="close" id="scanClose">閉じる</button>
+    <button type="button" class="manual" id="scanManual">価格を手入力</button>
+  </div>
+</section>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet-in">
+    <h2 id="sheetTitle">商品を追加</h2>
+    <div class="busy" id="busy" hidden><div class="spin"></div><span id="busyText">値札を読んでいます…</span></div>
+    <div class="readout" id="readout" hidden></div>
+    <div class="janline" id="janline" hidden>JAN <b id="janVal"></b></div>
+    <label class="field" for="fPrice"><span>価格（1個あたり）</span>
+      <input id="fPrice" class="price-in" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off">
+    </label>
+    <div class="seg" id="fTax" role="group" aria-label="価格の種類">
+      <button type="button" data-tax="incl" aria-pressed="true">税込</button>
+      <button type="button" data-tax="ex8" aria-pressed="false">税抜 8%</button>
+      <button type="button" data-tax="ex10" aria-pressed="false">税抜 10%</button>
+    </div>
+    <div class="field"><span>個数</span>
+      <div class="qty" id="fQty">
+        <button type="button" class="q" data-q="1" aria-pressed="true">1</button>
+        <button type="button" class="q" data-q="2" aria-pressed="false">2</button>
+        <button type="button" class="q" data-q="3" aria-pressed="false">3</button>
+        <button type="button" class="q" data-q="5" aria-pressed="false">5</button>
+        <div class="step"><button type="button" id="qMinus" aria-label="1個減らす">−</button><output id="qOut">1</output><button type="button" id="qPlus" aria-label="1個増やす">＋</button></div>
+      </div>
+    </div>
+    <label class="field" for="fName"><span>商品名（なくてもOK）</span>
+      <input id="fName" type="text" autocomplete="off" placeholder="例：シャンプー 詰替">
+    </label>
+    <div class="preview" id="preview" data-state="ok"></div>
+    <div class="sheet-act">
+      <button type="button" id="cancelBtn">やめる</button>
+      <button type="button" class="primary" id="addBtn">追加する</button>
+    </div>
+  </div>
+</section>
+
+<div class="toast" id="toast" hidden><span id="toastText"></span><button type="button" id="toastUndo">元に戻す</button></div>
+
+<script>
+(() => {
+  const KEY = "welkatsu5000-v1";
+  const $ = id => document.getElementById(id);
+  const yen = n => Math.round(n).toLocaleString("ja-JP");
+
+  // ---- 状態 ----
+  const fresh = () => ({ baskets: [{ items: [] }], cur: 0, limit: 5000, rate: 1.5, memo: {} });
+  let S = fresh();
+  try { const raw = localStorage.getItem(KEY); if (raw) { const v = JSON.parse(raw); if (v && Array.isArray(v.baskets) && v.baskets.length) S = Object.assign(fresh(), v); } } catch (e) {}
+  if (S.cur >= S.baskets.length) S.cur = 0;
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // ---- 計算（純粋関数） ----
+  const TAX = { ex8: 0.08, ex10: 0.10 };
+  function totalOf(items) {
+    let incl = 0, ex8 = 0, ex10 = 0;
+    for (const it of items) {
+      const v = it.unit * it.qty;
+      if (it.tax === "ex8") ex8 += v; else if (it.tax === "ex10") ex10 += v; else incl += v;
+    }
+    return incl + Math.floor(ex8 * 108 / 100) + Math.floor(ex10 * 110 / 100);
+  }
+  const capYen = () => Math.floor(S.limit * S.rate + 1e-9);
+  const needPt = total => total <= 0 ? 0 : Math.ceil(total / S.rate - 1e-9);
+  function judge(total) {
+    const cap = capYen();
+    if (total <= 0) return "empty";
+    if (total > cap) return "ng";
+    if (cap - total < Math.max(150, cap * 0.02)) return "warn";
+    return "ok";
+  }
+  const lineAmt = it => it.tax === "incl" ? it.unit * it.qty : Math.floor(it.unit * it.qty * (100 + TAX[it.tax] * 100) / 100);
+  window.__welkatsuCalc = { totalOf, needPt, judge, capYen };
+
+  // ---- 表示 ----
+  const basket = () => S.baskets[S.cur];
+  function render() {
+    const items = basket().items, total = totalOf(items), cap = capYen(), st = judge(total), pt = needPt(total);
+    $("status").dataset.state = st;
+    $("stBasket").textContent = `会計${S.cur + 1}の合計（税込）`;
+    $("stTotal").innerHTML = `${yen(total)}<small> 円 / ${yen(cap)}円</small>`;
+    $("stPt").textContent = `${yen(pt)} pt`;
+    $("stCap").textContent = `${yen(S.limit)} pt`;
+    $("stBar").style.width = Math.min(100, total / cap * 100) + "%";
+    $("stBadge").textContent = { empty: "まだ0円", ok: "OK", warn: "ほぼ上限", ng: "NG 上限オーバー" }[st];
+    $("stMsg").textContent = st === "ng"
+      ? `${yen(total - cap)}円 オーバー（${yen(pt - S.limit)}pt 足りない）`
+      : `あと ${yen(cap - total)}円分（${yen(S.limit - pt)}pt）入れられます`;
+
+    // タブ
+    const tabs = $("tabs"); tabs.replaceChildren();
+    S.baskets.forEach((b, i) => {
+      const t = totalOf(b.items), btn = document.createElement("button");
+      btn.type = "button"; btn.className = "tab" + (judge(t) === "ng" ? " ng" : "");
+      btn.setAttribute("aria-selected", String(i === S.cur));
+      btn.innerHTML = `<span>会計${i + 1}</span><b>${yen(t)}円</b>`;
+      btn.onclick = () => { S.cur = i; save(); render(); };
+      tabs.append(btn);
+    });
+    const add = document.createElement("button");
+    add.type = "button"; add.className = "tab add"; add.textContent = "＋ 次の会計";
+    add.onclick = () => { S.baskets.push({ items: [] }); S.cur = S.baskets.length - 1; save(); render(); };
+    tabs.append(add);
+    const sel = tabs.querySelector('[aria-selected="true"]'); if (sel) sel.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    // リスト
+    const list = $("list"); list.replaceChildren();
+    if (!items.length) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.innerHTML = `<b>この会計はまだ空です</b><ol><li>下の「バーコード」で値札か商品のバーコードを読む</li><li>価格を入れて、個数を選んで「追加する」（同じ商品は2回目から価格が自動で出ます）</li><li>上のパネルが赤（NG）になったら、その商品は「次の会計へ」</li></ol><span>バーコードがない時は「手入力」で価格だけ打ち込めます。</span>`;
+      list.append(e);
+    }
+    items.forEach((it, idx) => {
+      const row = document.createElement("div"); row.className = "item";
+      const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = it.name || "（名前なし）";
+      const amt = document.createElement("div"); amt.className = "amt num"; amt.textContent = yen(lineAmt(it)) + "円";
+      const sub = document.createElement("div"); sub.className = "sub num";
+      sub.textContent = `${yen(it.unit)}円 × ${it.qty}`;
+      if (it.tax !== "incl") { const c = document.createElement("span"); c.className = "taxchip"; c.textContent = it.tax === "ex8" ? "税抜8%" : "税抜10%"; sub.append(c); }
+      const ctl = document.createElement("div"); ctl.className = "ctl";
+      const step = document.createElement("div"); step.className = "step";
+      const minus = document.createElement("button"); minus.type = "button"; minus.textContent = "−"; minus.setAttribute("aria-label", "1個減らす");
+      const out = document.createElement("output"); out.textContent = it.qty;
+      const plus = document.createElement("button"); plus.type = "button"; plus.textContent = "＋"; plus.setAttribute("aria-label", "1個増やす");
+      minus.onclick = () => { if (it.qty > 1) { it.qty--; save(); render(); } };
+      plus.onclick = () => { it.qty++; save(); render(); };
+      step.append(minus, out, plus);
+      const mv = document.createElement("button"); mv.type = "button"; mv.className = "mini"; mv.textContent = "次の会計へ";
+      mv.onclick = () => moveNext(idx);
+      const del = document.createElement("button"); del.type = "button"; del.className = "mini del"; del.textContent = "削除";
+      del.onclick = () => removeItem(idx);
+      ctl.append(step, mv, del);
+      row.append(nm, amt, sub, ctl);
+      list.append(row);
+    });
+
+    // 会計の操作
+    const tools = $("basketTools"); tools.replaceChildren();
+    if (items.length) {
+      const clr = document.createElement("button"); clr.type = "button"; clr.className = "mini"; clr.textContent = "この会計を空にする";
+      clr.onclick = () => inlineConfirm(tools, "この会計の商品をすべて消しますか？", () => { lastDeleted = { cur: S.cur, items: basket().items.slice(), all: true }; basket().items = []; save(); render(); toast("会計を空にしました"); });
+      tools.append(clr);
+    }
+    if (S.baskets.length > 1 && !items.length) {
+      const rm = document.createElement("button"); rm.type = "button"; rm.className = "mini"; rm.textContent = "この会計タブを閉じる";
+      rm.onclick = () => { S.baskets.splice(S.cur, 1); S.cur = Math.max(0, S.cur - 1); save(); render(); };
+      tools.append(rm);
+    }
+  }
+
+  function inlineConfirm(host, msg, ok) {
+    host.replaceChildren();
+    const w = document.createElement("div"); w.className = "confirm";
+    const t = document.createElement("span"); t.textContent = msg;
+    const y = document.createElement("button"); y.type = "button"; y.className = "mini del"; y.style.marginLeft = "0"; y.textContent = "消す";
+    const n = document.createElement("button"); n.type = "button"; n.className = "mini"; n.textContent = "やめる";
+    y.onclick = ok; n.onclick = render;
+    w.append(t, y, n); host.append(w);
+  }
+
+  let lastDeleted = null, toastTimer = 0;
+  function toast(msg, undoable = true) {
+    $("toastText").textContent = msg; $("toastUndo").hidden = !undoable; $("toast").hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, 5000);
+  }
+  $("toastUndo").onclick = () => {
+    if (lastDeleted && S.baskets[lastDeleted.cur]) {
+      const b = S.baskets[lastDeleted.cur];
+      if (lastDeleted.all) b.items = lastDeleted.items; else b.items.splice(lastDeleted.idx, 0, lastDeleted.item);
+      S.cur = lastDeleted.cur; lastDeleted = null; save(); render();
+    }
+    $("toast").hidden = true;
+  };
+  function removeItem(idx) {
+    const [item] = basket().items.splice(idx, 1);
+    lastDeleted = { cur: S.cur, idx, item }; save(); render(); toast(`「${item.name || "商品"}」を削除しました`);
+  }
+  function moveNext(idx) {
+    const [item] = basket().items.splice(idx, 1);
+    if (S.cur + 1 >= S.baskets.length) S.baskets.push({ items: [] });
+    S.baskets[S.cur + 1].items.push(item); save(); render();
+    toast(`会計${S.cur + 2}へ移しました`, false);
+  }
+
+  // ---- 追加シート ----
+  let draft = null, reading = null, readCtl = null;
+  function openSheet(withBusy, jan) {
+    draft = { tax: "incl", qty: 1, jan: jan || "" }; reading = null;
+    $("fPrice").value = ""; $("fName").value = ""; $("readout").hidden = true;
+    $("busy").hidden = true; $("sheetTitle").textContent = jan ? "読み取りました" : "商品を追加";
+    $("janline").hidden = !jan; $("janVal").textContent = jan || "";
+    const memo = jan && S.memo[jan];
+    if (memo) {
+      draft.tax = memo.tax || "incl"; $("fPrice").value = memo.unit; $("fName").value = memo.name || "";
+      const ro = $("readout"); ro.hidden = false;
+      ro.textContent = `前に入れた価格（${yen(memo.unit)}円）を出しました。値札と違えば打ち直してください。`;
+    } else if (jan) {
+      const ro = $("readout"); ro.hidden = false;
+      ro.textContent = "初めての商品です。値札の価格を入れてください（次からは自動で出ます）。";
+    }
+    syncSheet();
+    $("backdrop").hidden = false; $("sheet").hidden = false;
+    setTimeout(() => { const f = $("fPrice"); f.focus(); if (memo) f.select(); }, 60);
+  }
+  function closeSheet() { if (readCtl) readCtl.abort(); $("backdrop").hidden = true; $("sheet").hidden = true; draft = null; }
+  function priceVal() { const n = parseInt(($("fPrice").value || "").replace(/[^0-9]/g, ""), 10); return isFinite(n) ? n : 0; }
+  function syncSheet() {
+    if (!draft) return;
+    document.querySelectorAll("#fTax button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tax === draft.tax)));
+    document.querySelectorAll("#fQty .q").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.q === draft.qty)));
+    $("qOut").textContent = draft.qty;
+    const unit = priceVal();
+    const cur = totalOf(basket().items);
+    const next = totalOf(basket().items.concat(unit ? [{ unit, qty: draft.qty, tax: draft.tax }] : []));
+    const st = judge(next), cap = capYen(), p = $("preview");
+    p.dataset.state = st === "empty" ? "ok" : st;
+    if (!unit) p.innerHTML = `<span>価格を入れると、追加後に上限に入るか判定します</span>`;
+    else p.innerHTML = st === "ng"
+      ? `<span>NG：追加すると ${yen(next)}円（${yen(next - cap)}円オーバー）</span><small>次の会計に入れるか、個数を減らしてください</small>`
+      : `<span>${st === "warn" ? "ほぼ上限" : "OK"}：追加後 ${yen(next)}円 / 使うポイント ${yen(needPt(next))}pt</span><small>この商品 +${yen(next - cur)}円・あと ${yen(cap - next)}円分</small>`;
+    $("addBtn").disabled = !unit;
+  }
+  $("fPrice").addEventListener("input", syncSheet);
+  $("fTax").addEventListener("click", e => {
+    const b = e.target.closest("button[data-tax]"); if (!b || !draft) return;
+    draft.tax = b.dataset.tax;
+    if (reading) { // 読み取り値があれば、種類に合う価格へ入れ替える
+      if (draft.tax === "incl" && reading.price_incl) $("fPrice").value = reading.price_incl;
+      if (draft.tax !== "incl" && reading.price_excl) $("fPrice").value = reading.price_excl;
+    }
+    syncSheet();
+  });
+  $("fQty").addEventListener("click", e => { const b = e.target.closest(".q"); if (b && draft) { draft.qty = +b.dataset.q; syncSheet(); } });
+  $("qMinus").onclick = () => { if (draft && draft.qty > 1) { draft.qty--; syncSheet(); } };
+  $("qPlus").onclick = () => { if (draft) { draft.qty++; syncSheet(); } };
+  $("cancelBtn").onclick = closeSheet;
+  $("backdrop").onclick = closeSheet;
+  $("addBtn").onclick = () => {
+    const unit = priceVal(); if (!unit || !draft) return;
+    const item = { name: $("fName").value.trim(), unit, qty: draft.qty, tax: draft.tax, jan: draft.jan || "" };
+    basket().items.push(item);
+    if (item.jan) S.memo[item.jan] = { name: item.name, unit, tax: item.tax };
+    save(); closeSheet(); render();
+    if (judge(totalOf(basket().items)) === "ng") { try { navigator.vibrate && navigator.vibrate([80, 60, 80]); } catch (e) {} }
+  };
+
+  // ---- バーコード読み取り（カメラ） ----
+  // Androidの Chrome は標準の BarcodeDetector、iPhone は ZXing で読む。読めるのは商品番号(JAN)だけで、価格は入っていない
+  $("keyBtn").onclick = () => openSheet(false);
+  $("camBtn").onclick = startScan;
+  $("scanClose").onclick = stopScan;
+  $("scanManual").onclick = () => { stopScan(); openSheet(false); };
+
+  let stream = null, zxReader = null, zxControls = null, scanTimer = 0, scanning = false;
+  const validJan = s => /^(\d{8}|\d{12}|\d{13})$/.test(s);
+  function beep() {
+    try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+    try {
+      const A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+      const ac = beep.ac || (beep.ac = new A()); const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 1800; g.gain.value = 0.08; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.08);
+    } catch (e) {}
+  }
+  function onCode(raw) {
+    const jan = String(raw || "").replace(/[^0-9]/g, "");
+    if (!scanning || !validJan(jan)) return;
+    beep(); stopScan(); openSheet(false, jan);
+  }
+  async function startScan() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
+    $("scan").hidden = false; scanning = true;
+    $("scanMsg").innerHTML = "<b>値札か商品のバーコードを枠に入れてください</b>";
+    try { if (beep.ac && beep.ac.state === "suspended") beep.ac.resume(); else if (!beep.ac) { const A = window.AudioContext || window.webkitAudioContext; if (A) beep.ac = new A(); } } catch (e) {}
+    const video = $("video");
+    try {
+      if ("BarcodeDetector" in window) {
+        const fm = await BarcodeDetector.getSupportedFormats().catch(() => []);
+        if (fm.includes("ean_13")) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+          video.srcObject = stream; await video.play();
+          const det = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"].filter(f => fm.includes(f)) });
+          const tick = async () => {
+            if (!scanning) return;
+            try { const r = await det.detect(video); if (r && r[0]) { onCode(r[0].rawValue); return; } } catch (e) {}
+            scanTimer = setTimeout(tick, 120);
+          };
+          tick(); return;
+        }
+      }
+      if (!window.ZXing) throw new Error("zxing_missing");
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A]);
+      zxReader = new ZXing.BrowserMultiFormatReader(hints, 150);
+      await zxReader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }, video, (res) => { if (res) onCode(res.getText()); });
+    } catch (e) {
+      const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError");
+      $("scanMsg").innerHTML = denied
+        ? "<b>カメラが許可されていません</b><br>ブラウザの設定でこのページのカメラを許可するか、「価格を手入力」を使ってください"
+        : "<b>カメラを起動できませんでした</b><br>「価格を手入力」を使ってください";
+    }
+  }
+  function stopScan() {
+    scanning = false; clearTimeout(scanTimer);
+    try { if (zxReader) zxReader.reset(); } catch (e) {}
+    zxReader = null;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    const v = $("video"); if (v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} v.srcObject = null; }
+    $("scan").hidden = true;
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden && scanning) stopScan(); });
+  function toastMsg(m) { toast(m, false); }
+
+  // ---- 設定 ----
+  $("setLimit").value = S.limit; $("setRate").value = S.rate;
+  $("setLimit").addEventListener("change", () => { const v = parseInt($("setLimit").value, 10); if (v > 0) { S.limit = v; save(); render(); } else $("setLimit").value = S.limit; });
+  $("setRate").addEventListener("change", () => { const v = parseFloat($("setRate").value); if (v > 0) { S.rate = v; save(); render(); } else $("setRate").value = S.rate; });
+  $("resetAll").onclick = () => inlineConfirmReset();
+  function inlineConfirmReset() {
+    const host = $("resetArea"); host.replaceChildren();
+    const t = document.createElement("span"); t.textContent = "全部の会計を消しますか？（設定は残ります）";
+    const y = document.createElement("button"); y.type = "button"; y.className = "mini del"; y.style.marginLeft = "0"; y.textContent = "消す";
+    const n = document.createElement("button"); n.type = "button"; n.className = "mini"; n.textContent = "やめる";
+    const restore = () => { host.replaceChildren(); const b = document.createElement("button"); b.type = "button"; b.className = "mini"; b.id = "resetAll"; b.textContent = "全部の会計を消す"; b.onclick = inlineConfirmReset; host.append(b); };
+    y.onclick = () => { S.baskets = [{ items: [] }]; S.cur = 0; save(); render(); restore(); toast("全部の会計を消しました", false); };
+    n.onclick = restore;
+    host.append(t, y, n);
+  }
+
+  render();
+})();
+</script>
+
+</body>
+</html>
