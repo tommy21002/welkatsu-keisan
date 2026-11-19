@@ -487,13 +487,8 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
 
   let stream = null, zxReader = null, zxControls = null, scanTimer = 0, scanning = false;
   const validJan = s => /^(\d{8}|\d{12}|\d{13})$/.test(s);
-  function beep() {
+  function beep() { // 音は鳴らさない（店でうるさいため）。対応端末だけ短く振動
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
-    try {
-      const A = window.AudioContext || window.webkitAudioContext; if (!A) return;
-      const ac = beep.ac || (beep.ac = new A()); const o = ac.createOscillator(), g = ac.createGain();
-      o.frequency.value = 1800; g.gain.value = 0.08; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.08);
-    } catch (e) {}
   }
   function onCode(raw) {
     const jan = String(raw || "").replace(/[^0-9]/g, "");
@@ -504,7 +499,6 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
     $("scan").hidden = false; scanning = true;
     $("scanMsg").innerHTML = "<b>値札か商品のバーコードを枠に入れてください</b>";
-    try { if (beep.ac && beep.ac.state === "suspended") beep.ac.resume(); else if (!beep.ac) { const A = window.AudioContext || window.webkitAudioContext; if (A) beep.ac = new A(); } } catch (e) {}
     const video = $("video");
     try {
       if ("BarcodeDetector" in window) {
