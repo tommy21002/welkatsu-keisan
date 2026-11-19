@@ -70,7 +70,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .status[data-state="warn"] .st-msg{color:var(--warn)}
 .status[data-state="ok"] .st-msg{color:var(--ok)}
 
-/* 会計タブ */
+/* カゴタブ */
 .tabs{display:flex;gap:8px;overflow-x:auto;padding-block:10px 2px;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
 .tab{flex:0 0 auto;border:1.5px solid var(--line);background:var(--surface);border-radius:12px;padding:6px 12px;display:grid;text-align:left;line-height:1.25}
@@ -152,6 +152,17 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom,0px));z-index:30;background:var(--ink);color:var(--bg);
   border-radius:12px;padding:10px 14px;display:flex;gap:14px;align-items:center;font-size:14px;max-width:calc(100% - 32px)}
 .toast button{background:transparent;border:0;color:var(--tag);font-weight:700}
+.summary{margin-top:18px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.summary h3{margin:0 0 8px;font-size:14px;color:var(--muted);font-weight:700;letter-spacing:.04em}
+.summary table{width:100%;border-collapse:collapse;font-size:15px}
+.summary td{padding:7px 4px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+.summary td.r{text-align:right;font-family:var(--font-num)}
+.summary tr.cur td{font-weight:700}
+.summary tr.ng td{color:var(--ng)}
+.summary tr.all td{border-top:2px solid var(--ink);font-weight:700}
+.sheet-act.three{grid-template-columns:1fr 1fr}
+.sheet-act.three #cancelBtn{grid-column:1/-1;height:44px;font-size:15px}
+.sheet-act .ghost{background:var(--bg);color:var(--ng);border-color:var(--ng)}
 .confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
 
 /* バーコード読み取り画面 */
@@ -180,7 +191,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     <section class="status" id="status" data-state="empty" aria-live="polite">
       <div class="st-top">
         <div>
-          <div class="st-label" id="stBasket">会計1の合計（税込）</div>
+          <div class="st-label" id="stBasket">カゴ1の合計（税込）</div>
           <div class="st-total num" id="stTotal">0<small> 円 / 7,500円</small></div>
         </div>
         <span class="badge" id="stBadge">まだ0円</span>
@@ -192,12 +203,14 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       </div>
       <div class="st-msg" id="stMsg">あと 7,500円分 入れられます</div>
     </section>
-    <nav class="tabs" id="tabs" aria-label="会計の切り替え"></nav>
+    <nav class="tabs" id="tabs" aria-label="カゴの切り替え"></nav>
   </div>
 
   <div class="list" id="list"></div>
 
   <div class="tools" id="basketTools"></div>
+
+  <section class="summary" id="summary" hidden aria-label="カゴの一覧"></section>
 
   <details class="settings">
     <summary>設定（上限ポイント・倍率）</summary>
@@ -208,7 +221,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       <label for="setRate">1ポイントあたりの価値（円）
         <input id="setRate" type="number" inputmode="decimal" min="1" step="0.1" value="1.5">
       </label>
-      <div class="confirm" id="resetArea"><button class="mini" id="resetAll" type="button">全部の会計を消す</button></div>
+      <div class="confirm" id="resetArea"><button class="mini" id="resetAll" type="button">全部のカゴを消す</button></div>
     </div>
     <p class="note">計算のしかた：使える金額＝上限ポイント×1ポイントの価値（5,000pt×1.5円＝7,500円）。使うポイント＝合計÷1.5（端数は切り上げ）。税抜で入れた商品は、8%と10%ごとにまとめて税を足し、1円未満を切り捨てます。お店のレジの計算と1〜数円ずれることがあるので、上限ぎりぎりは少し余裕を残してください。</p>
   </details>
@@ -265,6 +278,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     <div class="sheet-act">
       <button type="button" id="cancelBtn">やめる</button>
       <button type="button" class="primary" id="addBtn">追加する</button>
+      <button type="button" class="primary" id="nextBtn" hidden>次のカゴへ</button>
     </div>
   </div>
 </section>
@@ -311,7 +325,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
   function render() {
     const items = basket().items, total = totalOf(items), cap = capYen(), st = judge(total), pt = needPt(total);
     $("status").dataset.state = st;
-    $("stBasket").textContent = `会計${S.cur + 1}の合計（税込）`;
+    $("stBasket").textContent = `カゴ${S.cur + 1}の合計（税込）`;
     $("stTotal").innerHTML = `${yen(total)}<small> 円 / ${yen(cap)}円</small>`;
     $("stPt").textContent = `${yen(pt)} pt`;
     $("stCap").textContent = `${yen(S.limit)} pt`;
@@ -327,12 +341,12 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       const t = totalOf(b.items), btn = document.createElement("button");
       btn.type = "button"; btn.className = "tab" + (judge(t) === "ng" ? " ng" : "");
       btn.setAttribute("aria-selected", String(i === S.cur));
-      btn.innerHTML = `<span>会計${i + 1}</span><b>${yen(t)}円</b>`;
+      btn.innerHTML = `<span>カゴ${i + 1}</span><b>${yen(t)}円</b><span>${yen(needPt(t))}pt</span>`;
       btn.onclick = () => { S.cur = i; save(); render(); };
       tabs.append(btn);
     });
     const add = document.createElement("button");
-    add.type = "button"; add.className = "tab add"; add.textContent = "＋ 次の会計";
+    add.type = "button"; add.className = "tab add"; add.textContent = "＋ 次のカゴ";
     add.onclick = () => { S.baskets.push({ items: [] }); S.cur = S.baskets.length - 1; save(); render(); };
     tabs.append(add);
     const sel = tabs.querySelector('[aria-selected="true"]'); if (sel) sel.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -341,7 +355,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     const list = $("list"); list.replaceChildren();
     if (!items.length) {
       const e = document.createElement("div"); e.className = "empty";
-      e.innerHTML = `<b>この会計はまだ空です</b><ol><li>下の「バーコード」で値札か商品のバーコードを読む</li><li>価格を入れて、個数を選んで「追加する」（同じ商品は2回目から価格が自動で出ます）</li><li>上のパネルが赤（NG）になったら、その商品は「次の会計へ」</li></ol><span>バーコードがない時は「手入力」で価格だけ打ち込めます。</span>`;
+      e.innerHTML = `<b>このカゴはまだ空です</b><ol><li>下の「バーコード」で値札か商品のバーコードを読む</li><li>価格を入れて、個数を選んで「追加する」（同じ商品は2回目から価格が自動で出ます）</li><li>入れるとNGになる商品は、追加画面に「カゴ2へ入れる」ボタンが出ます。押すと上限内に収まるカゴへ入ります</li><li>下の「カゴの一覧」で、カゴごとの金額とポイントをレジ前に確認できます</li></ol><span>バーコードがない時は「手入力」で価格だけ打ち込めます。</span>`;
       list.append(e);
     }
     items.forEach((it, idx) => {
@@ -359,7 +373,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       minus.onclick = () => { if (it.qty > 1) { it.qty--; save(); render(); } };
       plus.onclick = () => { it.qty++; save(); render(); };
       step.append(minus, out, plus);
-      const mv = document.createElement("button"); mv.type = "button"; mv.className = "mini"; mv.textContent = "次の会計へ";
+      const mv = document.createElement("button"); mv.type = "button"; mv.className = "mini"; mv.textContent = "次のカゴへ";
       mv.onclick = () => moveNext(idx);
       const del = document.createElement("button"); del.type = "button"; del.className = "mini del"; del.textContent = "削除";
       del.onclick = () => removeItem(idx);
@@ -368,18 +382,40 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       list.append(row);
     });
 
-    // 会計の操作
+    // カゴの操作
     const tools = $("basketTools"); tools.replaceChildren();
     if (items.length) {
-      const clr = document.createElement("button"); clr.type = "button"; clr.className = "mini"; clr.textContent = "この会計を空にする";
-      clr.onclick = () => inlineConfirm(tools, "この会計の商品をすべて消しますか？", () => { lastDeleted = { cur: S.cur, items: basket().items.slice(), all: true }; basket().items = []; save(); render(); toast("会計を空にしました"); });
+      const clr = document.createElement("button"); clr.type = "button"; clr.className = "mini"; clr.textContent = "このカゴを空にする";
+      clr.onclick = () => inlineConfirm(tools, "このカゴの商品をすべて消しますか？", () => { lastDeleted = { cur: S.cur, items: basket().items.slice(), all: true }; basket().items = []; save(); render(); toast("カゴを空にしました"); });
       tools.append(clr);
     }
     if (S.baskets.length > 1 && !items.length) {
-      const rm = document.createElement("button"); rm.type = "button"; rm.className = "mini"; rm.textContent = "この会計タブを閉じる";
+      const rm = document.createElement("button"); rm.type = "button"; rm.className = "mini"; rm.textContent = "このカゴを閉じる";
       rm.onclick = () => { S.baskets.splice(S.cur, 1); S.cur = Math.max(0, S.cur - 1); save(); render(); };
       tools.append(rm);
     }
+    renderSummary();
+  }
+
+  function renderSummary() {
+    const box = $("summary");
+    const used = S.baskets.map((b, i) => ({ i, t: totalOf(b.items), n: b.items.reduce((a, it) => a + it.qty, 0) })).filter(x => x.n > 0);
+    if (used.length < 2) { box.hidden = true; return; }
+    box.hidden = false; box.replaceChildren();
+    const h = document.createElement("h3"); h.textContent = "カゴの一覧（1カゴ＝1回の会計）";
+    const tb = document.createElement("table");
+    let sumT = 0, sumP = 0, sumN = 0;
+    for (const x of used) {
+      const p = needPt(x.t); sumT += x.t; sumP += p; sumN += x.n;
+      const tr = document.createElement("tr"); tr.className = (x.i === S.cur ? "cur " : "") + (judge(x.t) === "ng" ? "ng" : "");
+      tr.innerHTML = `<td>カゴ${x.i + 1}</td><td class="r">${x.n}点</td><td class="r">${yen(x.t)}円</td><td class="r">${yen(p)}pt</td><td class="r">${judge(x.t) === "ng" ? "NG" : "OK"}</td>`;
+      tr.onclick = () => { S.cur = x.i; save(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+      tb.append(tr);
+    }
+    const tr = document.createElement("tr"); tr.className = "all";
+    tr.innerHTML = `<td>合計</td><td class="r">${sumN}点</td><td class="r">${yen(sumT)}円</td><td class="r">${yen(sumP)}pt</td><td></td>`;
+    tb.append(tr);
+    box.append(h, tb);
   }
 
   function inlineConfirm(host, msg, ok) {
@@ -413,7 +449,16 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     const [item] = basket().items.splice(idx, 1);
     if (S.cur + 1 >= S.baskets.length) S.baskets.push({ items: [] });
     S.baskets[S.cur + 1].items.push(item); save(); render();
-    toast(`会計${S.cur + 2}へ移しました`, false);
+    toast(`カゴ${S.cur + 2}へ移しました`, false);
+  }
+
+  // 今のカゴ以外で、この商品を入れても上限内に収まる最初のカゴ（なければ新しいカゴ）
+  function fitIndex(item) {
+    for (let i = 0; i < S.baskets.length; i++) {
+      if (i === S.cur) continue;
+      if (totalOf(S.baskets[i].items.concat([item])) <= capYen()) return i;
+    }
+    return S.baskets.length;
   }
 
   // ---- 追加シート ----
@@ -450,9 +495,19 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     p.dataset.state = st === "empty" ? "ok" : st;
     if (!unit) p.innerHTML = `<span>価格を入れると、追加後に上限に入るか判定します</span>`;
     else p.innerHTML = st === "ng"
-      ? `<span>NG：追加すると ${yen(next)}円（${yen(next - cap)}円オーバー）</span><small>次の会計に入れるか、個数を減らしてください</small>`
+      ? `<span>NG：追加すると ${yen(next)}円（${yen(next - cap)}円オーバー）</span><small>次のカゴに入れるか、個数を減らしてください</small>`
       : `<span>${st === "warn" ? "ほぼ上限" : "OK"}：追加後 ${yen(next)}円 / 使うポイント ${yen(needPt(next))}pt</span><small>この商品 +${yen(next - cur)}円・あと ${yen(cap - next)}円分</small>`;
     $("addBtn").disabled = !unit;
+    const act = document.querySelector(".sheet-act"), nb = $("nextBtn"), ab = $("addBtn");
+    if (unit && st === "ng") {
+      const fi = fitIndex({ unit, qty: draft.qty, tax: draft.tax });
+      const alone = totalOf([{ unit, qty: draft.qty, tax: draft.tax }]) > cap;
+      nb.hidden = false; nb.dataset.idx = fi;
+      nb.textContent = alone ? "新しいカゴへ（単品で超え）" : `カゴ${fi + 1}へ入れる`;
+      ab.textContent = "このカゴに（NG）"; ab.className = "ghost"; act.classList.add("three");
+    } else {
+      nb.hidden = true; ab.textContent = "追加する"; ab.className = "primary"; act.classList.remove("three");
+    }
   }
   $("fPrice").addEventListener("input", syncSheet);
   $("fTax").addEventListener("click", e => {
@@ -469,10 +524,16 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
   $("qPlus").onclick = () => { if (draft) { draft.qty++; syncSheet(); } };
   $("cancelBtn").onclick = closeSheet;
   $("backdrop").onclick = closeSheet;
-  $("addBtn").onclick = () => {
+  $("addBtn").onclick = () => addTo(S.cur);
+  $("nextBtn").onclick = () => addTo(+$("nextBtn").dataset.idx);
+  function addTo(idx) {
     const unit = priceVal(); if (!unit || !draft) return;
     const item = { name: $("fName").value.trim(), unit, qty: draft.qty, tax: draft.tax, jan: draft.jan || "" };
+    while (S.baskets.length <= idx) S.baskets.push({ items: [] });
+    const moved = idx !== S.cur;
+    S.cur = idx;
     basket().items.push(item);
+    if (moved) setTimeout(() => toast(`カゴ${idx + 1}に入れました`, false), 0);
     if (item.jan) S.memo[item.jan] = { name: item.name, unit, tax: item.tax };
     save(); closeSheet(); render();
     if (judge(totalOf(basket().items)) === "ng") { try { navigator.vibrate && navigator.vibrate([80, 60, 80]); } catch (e) {} }
@@ -545,11 +606,11 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
   $("resetAll").onclick = () => inlineConfirmReset();
   function inlineConfirmReset() {
     const host = $("resetArea"); host.replaceChildren();
-    const t = document.createElement("span"); t.textContent = "全部の会計を消しますか？（設定は残ります）";
+    const t = document.createElement("span"); t.textContent = "全部のカゴを消しますか？（設定は残ります）";
     const y = document.createElement("button"); y.type = "button"; y.className = "mini del"; y.style.marginLeft = "0"; y.textContent = "消す";
     const n = document.createElement("button"); n.type = "button"; n.className = "mini"; n.textContent = "やめる";
-    const restore = () => { host.replaceChildren(); const b = document.createElement("button"); b.type = "button"; b.className = "mini"; b.id = "resetAll"; b.textContent = "全部の会計を消す"; b.onclick = inlineConfirmReset; host.append(b); };
-    y.onclick = () => { S.baskets = [{ items: [] }]; S.cur = 0; save(); render(); restore(); toast("全部の会計を消しました", false); };
+    const restore = () => { host.replaceChildren(); const b = document.createElement("button"); b.type = "button"; b.className = "mini"; b.id = "resetAll"; b.textContent = "全部のカゴを消す"; b.onclick = inlineConfirmReset; host.append(b); };
+    y.onclick = () => { S.baskets = [{ items: [] }]; S.cur = 0; save(); render(); restore(); toast("全部のカゴを消しました", false); };
     n.onclick = restore;
     host.append(t, y, n);
   }
