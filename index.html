@@ -7,7 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ジェットストリーム・レジアタック">
-<meta name="theme-color" content="#F4C534">
+<meta name="theme-color" content="#0B0C11">
+<meta name="color-scheme" content="dark">
 <title>ジェットストリーム・レジアタック</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -85,7 +86,7 @@ window.addEventListener('hashchange',function(){ location.reload(); });
   --font-num:"Chakra Petch","BIZ UDPGothic","Roboto Mono",ui-monospace,monospace;
 }
 
-@media (prefers-color-scheme: dark){
+@media all{ /* 常に黒い画面（黒い三連星）。元は prefers-color-scheme: dark */
   :root:not([data-theme="light"]){
     --bg:#0B0C11;
     --surface:#161822;
@@ -607,7 +608,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   pointer-events:none;
 }
 .tab[aria-selected="true"] span{color:var(--dom-purple)}
-@media (prefers-color-scheme: dark){
+@media all{ /* 常に黒い画面（黒い三連星）。元は prefers-color-scheme: dark */
   :root:not([data-theme="light"]) .tab[aria-selected="true"] span{color:var(--dom-purple-hi)}
 }
 :root[data-theme="dark"] .tab[aria-selected="true"] span{color:var(--dom-purple-hi)}
@@ -789,7 +790,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
   font-weight:700;
   letter-spacing:.06em;
 }
-@media (prefers-color-scheme: dark){
+@media all{ /* 常に黒い画面（黒い三連星）。元は prefers-color-scheme: dark */
   :root:not([data-theme="light"]) .summary h3{color:var(--dom-purple-hi)}
 }
 :root[data-theme="dark"] .summary h3{color:var(--dom-purple-hi)}
@@ -878,7 +879,7 @@ details.settings summary::after{
   margin-right:4px;
   transition:transform .15s ease;
 }
-@media (prefers-color-scheme: dark){
+@media all{ /* 常に黒い画面（黒い三連星）。元は prefers-color-scheme: dark */
   :root:not([data-theme="light"]) details.settings summary::after{border-color:var(--dom-purple-hi)}
 }
 :root[data-theme="dark"] details.settings summary::after{border-color:var(--dom-purple-hi)}
