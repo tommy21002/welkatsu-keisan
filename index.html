@@ -6,9 +6,9 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="ウエル活計算">
+<meta name="apple-mobile-web-app-title" content="リミッター5000">
 <meta name="theme-color" content="#F4C534">
-<title>ウエル活5000計算</title>
+<title>リミッター5000</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap">
@@ -187,6 +187,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
 
 
 <div class="wrap">
+  <header class="app-head"><div class="app-name">リミッター5000</div><div class="app-sub">ウエル活 上限計算</div></header>
   <div class="panel">
     <section class="status" id="status" data-state="empty" aria-live="polite">
       <div class="st-top">
@@ -223,6 +224,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       </label>
       <div class="confirm" id="resetArea"><button class="mini" id="resetAll" type="button">全部のカゴを消す</button></div>
     </div>
+    <div class="field"><span>バーコード読み取り履歴（新しい順・最大30件）</span><div class="janline" id="scanLog">まだありません</div></div>
     <p class="note">計算のしかた：使える金額＝上限ポイント×1ポイントの価値（5,000pt×1.5円＝7,500円）。使うポイント＝合計÷1.5（端数は切り上げ）。税抜で入れた商品は、8%と10%ごとにまとめて税を足し、1円未満を切り捨てます。お店のレジの計算と1〜数円ずれることがあるので、上限ぎりぎりは少し余裕を残してください。</p>
   </details>
 </div>
@@ -253,7 +255,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     <h2 id="sheetTitle">商品を追加</h2>
     <div class="busy" id="busy" hidden><div class="spin"></div><span id="busyText">値札を読んでいます…</span></div>
     <div class="readout" id="readout" hidden></div>
-    <div class="janline" id="janline" hidden>JAN <b id="janVal"></b></div>
+    <div class="janline" id="janline" hidden>読み取った中身：<span id="janFmt"></span> <b id="janVal"></b><br><span id="janHint"></span></div>
     <label class="field" for="fPrice"><span>価格（1個あたり）</span>
       <input id="fPrice" class="price-in" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off">
     </label>
@@ -397,6 +399,17 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
     renderSummary();
   }
 
+  function renderLog() {
+    const box = $("scanLog"); const log = S.scanLog || [];
+    if (!log.length) { box.textContent = "まだありません"; return; }
+    box.replaceChildren();
+    for (const x of log) {
+      const d = new Date(x.t), line = document.createElement("div");
+      line.textContent = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}  ${FMT_JA[x.fmt] || x.fmt || "種類不明"}  ${x.code}`;
+      box.append(line);
+    }
+  }
+
   function renderSummary() {
     const box = $("summary");
     const used = S.baskets.map((b, i) => ({ i, t: totalOf(b.items), n: b.items.reduce((a, it) => a + it.qty, 0) })).filter(x => x.n > 0);
@@ -463,11 +476,19 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
 
   // ---- 追加シート ----
   let draft = null, reading = null, readCtl = null;
-  function openSheet(withBusy, jan) {
+  // 番号の中に値札の価格らしい数字が含まれているかの手がかり（判定ではなく目安）
+  function priceHint(code, fmt) {
+    if (/^(ean_13|ean_8|upc_a)$/.test(fmt) && /^(45|49)/.test(code)) return "日本の商品番号(JAN)です。価格は入っていません。";
+    if (/^2\d{12}$/.test(code)) return "2で始まる13桁＝お店が自分で付けた番号です。末尾近くに価格が入っている場合があります。値札の価格と見比べてください。";
+    return "値札の価格と見比べて、番号の中に同じ数字があれば価格入りのコードの可能性があります。";
+  }
+  function openSheet(withBusy, jan, fmt) {
     draft = { tax: "incl", qty: 1, jan: jan || "" }; reading = null;
     $("fPrice").value = ""; $("fName").value = ""; $("readout").hidden = true;
     $("busy").hidden = true; $("sheetTitle").textContent = jan ? "読み取りました" : "商品を追加";
     $("janline").hidden = !jan; $("janVal").textContent = jan || "";
+    $("janFmt").textContent = fmt ? (FMT_JA[fmt] || fmt) : "";
+    $("janHint").textContent = jan ? priceHint(jan, fmt) : "";
     const memo = jan && S.memo[jan];
     if (memo) {
       draft.tax = memo.tax || "incl"; $("fPrice").value = memo.unit; $("fName").value = memo.name || "";
@@ -548,13 +569,23 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
 
   let stream = null, zxReader = null, zxControls = null, scanTimer = 0, scanning = false;
   const validJan = s => /^(\d{8}|\d{12}|\d{13})$/.test(s);
+  const FMT_JA = { ean_13: "JAN(13桁)", ean_8: "JAN(8桁)", upc_a: "UPC", upc_e: "UPC-E", code_128: "CODE128（お店独自の可能性）", itf: "ITF（お店独自の可能性）", code_39: "CODE39（お店独自の可能性）", codabar: "NW-7（お店独自の可能性）", qr_code: "QRコード" };
+  const ZX_FMT = { EAN_13: "ean_13", EAN_8: "ean_8", UPC_A: "upc_a", UPC_E: "upc_e", CODE_128: "code_128", ITF: "itf", CODE_39: "code_39", CODABAR: "codabar", QR_CODE: "qr_code" };
+  let lastRead = { code: "", n: 0 };
   function beep() { // 音は鳴らさない（店でうるさいため）。対応端末だけ短く振動
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
   }
-  function onCode(raw) {
-    const jan = String(raw || "").replace(/[^0-9]/g, "");
-    if (!scanning || !validJan(jan)) return;
-    beep(); stopScan(); openSheet(false, jan);
+  function onCode(raw, fmt) {
+    const code = String(raw || "").trim();
+    if (!scanning || code.length < 4) return;
+    const isJan = /^(ean_13|ean_8|upc_a)$/.test(fmt) && validJan(code);
+    if (!isJan) { // JAN以外は読み違いが起きやすいので、同じ中身を2回続けて読めた時だけ採用
+      if (lastRead.code === code) lastRead.n++; else lastRead = { code, n: 1 };
+      if (lastRead.n < 2) return;
+    }
+    lastRead = { code: "", n: 0 };
+    try { S.scanLog = [{ t: Date.now(), fmt: fmt || "", code }].concat(S.scanLog || []).slice(0, 30); save(); renderLog(); } catch (e) {}
+    beep(); stopScan(); openSheet(false, code, fmt);
   }
   async function startScan() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
@@ -567,10 +598,10 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
         if (fm.includes("ean_13")) {
           stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
           video.srcObject = stream; await video.play();
-          const det = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"].filter(f => fm.includes(f)) });
+          const det = new BarcodeDetector({ formats: Object.keys(FMT_JA).filter(f => fm.includes(f)) });
           const tick = async () => {
             if (!scanning) return;
-            try { const r = await det.detect(video); if (r && r[0]) { onCode(r[0].rawValue); return; } } catch (e) {}
+            try { const r = await det.detect(video); if (r && r[0]) { onCode(r[0].rawValue, r[0].format); if (!scanning) return; } } catch (e) {}
             scanTimer = setTimeout(tick, 120);
           };
           tick(); return;
@@ -578,9 +609,9 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
       }
       if (!window.ZXing) throw new Error("zxing_missing");
       const hints = new Map();
-      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A]);
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, Object.keys(ZX_FMT).map(k => ZXing.BarcodeFormat[k]));
       zxReader = new ZXing.BrowserMultiFormatReader(hints, 150);
-      await zxReader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }, video, (res) => { if (res) onCode(res.getText()); });
+      await zxReader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }, video, (res) => { if (res) onCode(res.getText(), ZX_FMT[ZXing.BarcodeFormat[res.getBarcodeFormat()]] || ""); });
     } catch (e) {
       const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError");
       $("scanMsg").innerHTML = denied
@@ -616,6 +647,7 @@ input[type=text],input[type=number],input[inputmode]{font:inherit;width:100%;pad
   }
 
   render();
+  renderLog();
 })();
 </script>
 
