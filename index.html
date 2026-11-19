@@ -18,14 +18,15 @@
 /* 合言葉の関所：URLの #k=… を SHA-256 で照合。合言葉そのものはページに書かない。一度通ったら端末に覚える */
 document.documentElement.classList.add('locked');
 (function(){
-  var H='b2ce073ac10fc3d903ef098e9aad50ceab359e33c00bbd1aae4edce14c3835dc';
+  /* 1つ目=とみーさん用、2つ目=HSN用（HSN用を止める時は2つ目を消す） */
+  var H=['b2ce073ac10fc3d903ef098e9aad50ceab359e33c00bbd1aae4edce14c3835dc','e9becafdf158fa1d7d99b80a61570e5228e39dfe2ed0520831260da3404e1b01'];
   var m=location.hash.match(/k=([^&]+)/), k=m?decodeURIComponent(m[1]):'';
   try{ if(!k) k=localStorage.getItem('welkatsu_k')||''; }catch(e){}
   function deny(){ document.documentElement.classList.add('denied'); }
   if(!k||!window.crypto||!crypto.subtle){ deny(); return; }
   crypto.subtle.digest('SHA-256',new TextEncoder().encode(k)).then(function(buf){
     var hex=Array.prototype.map.call(new Uint8Array(buf),function(x){return ('0'+x.toString(16)).slice(-2);}).join('');
-    if(hex===H){
+    if(H.indexOf(hex)>=0){
       try{ localStorage.setItem('welkatsu_k',k); }catch(e){}
       document.documentElement.classList.remove('locked');
     } else {
