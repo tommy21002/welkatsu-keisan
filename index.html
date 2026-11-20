@@ -1495,7 +1495,7 @@ input[type=text],input[type=number],input[inputmode]{
   <div class="scan-frame" aria-hidden="true"></div>
   <div class="scan-bot">
     <button type="button" class="close" id="scanClose">閉じる</button>
-    <button type="button" class="manual" id="scanManual">価格を手入力</button>
+    <button type="button" class="manual" id="scanManual">値札を撮る（JAN＋価格）</button>
     <button type="button" class="close" id="priceSkip" hidden>価格は手で入れる</button>
     <button type="button" class="manual" id="priceShot" hidden>価格を読む</button>
   </div>
@@ -1858,7 +1858,7 @@ input[type=text],input[type=number],input[inputmode]{
   $("keyBtn").onclick = () => openSheet(false);
   $("camBtn").onclick = startScan;
   $("scanClose").onclick = stopScan;
-  $("scanManual").onclick = () => { stopScan(); openSheet(false); };
+  $("scanManual").onclick = () => { stopScan(); startPriceCam({ tag: true }); };
 
   let stream = null, zxReader = null, zxControls = null, scanTimer = 0, scanning = false;
   const validJan = s => /^(\d{8}|\d{12}|\d{13})$/.test(s);
@@ -1877,9 +1877,10 @@ input[type=text],input[type=number],input[inputmode]{
       if (lastRead.n < 2) return;
     }
     lastRead = { code: "", n: 0 };
-    try { S.scanLog = [{ t: Date.now(), fmt: fmt || "", code }].concat(S.scanLog || []).slice(0, 30); save(); renderLog(); } catch (e) {}
+    logScan(code, fmt);
     beep(); stopScan(); startPriceCam({ jan: code, fmt });
   }
+  function logScan(code, fmt) { try { S.scanLog = [{ t: Date.now(), fmt: fmt || "", code }].concat(S.scanLog || []).slice(0, 30); save(); renderLog(); } catch (e) {} }
   async function startScan() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
     setScanMode("barcode"); ocrWarm();
@@ -1972,8 +1973,13 @@ input[type=text],input[type=number],input[inputmode]{
       const hon = ints.reduce((a, b) => (String(b).length > String(a).length ? b : a)); // いちばん桁の多い赤い数字＝本体価格
       const c8 = "8" + fix2(hon * 1.08).replace(".", ""), c10 = "10" + fix2(hon * 1.10).replace(".", "");
       const s8 = lcs(dark, c8), s10 = lcs(dark, c10);
-      const rate = s10 > s8 ? 10 : 8;
-      return { hon, rate, incl: +fix2(hon * (1 + rate / 100)), sure: dark.length >= 3 && Math.max(s8, s10) >= 3 && Math.abs(s8 - s10) >= 2 };
+      let rate = s10 > s8 ? 10 : 8;
+      const sure = dark.length >= 3 && Math.max(s8, s10) >= 3 && Math.abs(s8 - s10) >= 2;
+      if (!sure) { // 決め手がない時は「8%」「10%」の表示そのものを見る。それもなければ8%（食品の値札が多いため）
+        const raw = String(darkText || "");
+        rate = /10\s*%/.test(raw) ? 10 : 8;
+      }
+      return { hon, rate, incl: +fix2(hon * (1 + rate / 100)), sure };
     }
     // 赤い数字がない値札：黒の小数入りの数字をそのまま税込とする
     const dec = nums(darkText).filter(t => /\.\d{2}$/.test(t)).map(Number).filter(v => v >= 1 && v <= 99999);
@@ -1993,10 +1999,13 @@ input[type=text],input[type=number],input[inputmode]{
   async function startPriceCam(opts) {
     ocrWarm();
     setScanMode("price"); $("scan").hidden = false;
-    $("scanMsg").innerHTML = (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れて「価格を読む」</b>" : "<b>値札の価格を枠に入れて「価格を読む」</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
+    $("priceShot").textContent = opts.tag ? "値札を読む" : "価格を読む";
+    $("scanMsg").innerHTML = opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れて「値札を読む」</b><br>値札に近づけて、枠いっぱいに入れると読みやすい"
+      : (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れて「価格を読む」</b>" : "<b>値札の価格を枠に入れて「価格を読む」</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
     priceCam = { stream: null, opts };
     try {
-      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      // 値札の細いバーコードも読めるよう、できるだけ細かい映像を頼む（対応しない機種は自動で下がる）
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
       if (!priceCam) { st.getTracks().forEach(t => t.stop()); return; }
       priceCam.stream = st; const v = $("video"); v.srcObject = st; await v.play();
     } catch (e) {
@@ -2009,41 +2018,78 @@ input[type=text],input[type=number],input[inputmode]{
     priceCam = null; const v = $("video"); if (v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} v.srcObject = null; }
     $("scan").hidden = true; setScanMode("barcode");
   }
-  function finishPrice(res, skipped) { // 結果を追加画面へ入れる（skipped＝自分で「手で入れる」を選んだ）
+  function finishPrice(res, skipped, bc) { // 結果を追加画面へ入れる（skipped＝自分で「手で入れる」を選んだ、bc＝値札から読めたJAN）
     const opts = priceCam ? priceCam.opts : {}; stopPriceCam();
-    if (!opts.inSheet) openSheet(false, opts.jan, opts.fmt);
-    else if (draft) { $("backdrop").hidden = false; $("sheet").hidden = false; fitSheet(); }
+    const jan = opts.jan || (bc && bc.code) || "", fmt = opts.fmt || (bc && bc.fmt) || "";
+    if (bc && !opts.jan) logScan(bc.code, bc.fmt);
+    if (!opts.inSheet) openSheet(false, jan, fmt);
+    else if (draft) {
+      $("backdrop").hidden = false; $("sheet").hidden = false; fitSheet();
+      if (bc && !draft.jan) { draft.jan = bc.code; $("janline").hidden = false; $("janVal").textContent = bc.code; $("janFmt").textContent = FMT_JA[bc.fmt] || bc.fmt; $("janHint").textContent = priceHint(bc.code, bc.fmt); }
+    }
     if (!draft || skipped) { if (draft) setTimeout(() => $("fPrice").focus(), 60); return; }
     const ro = $("readout"); ro.hidden = false;
     if (res) {
       draft.tax = "incl"; $("fPrice").value = res.incl;
       ro.textContent = res.hon
-        ? `値札から読みました：本体 ${yen(res.hon)}円 × ${res.rate}% ＝ 税込 ${yen2(res.incl)}円${res.sure ? "" : "（税率は自信なし）"}。値札と同じか確かめてください。`
+        ? `値札から読みました：本体 ${yen(res.hon)}円 × ${res.rate}% ＝ 税込 ${yen2(res.incl)}円。` + (res.sure ? "値札と同じか確かめてください。"
+          : `税率は自信なし：値札が${res.rate === 8 ? 10 : 8}%なら ${yen2(+fix2(res.hon * (res.rate === 8 ? 1.10 : 1.08)))}円 に打ち直してください。`)
         : `値札から税込 ${yen2(res.incl)}円 と読みました。値札と同じか確かめてください。`;
     } else ro.textContent = "値札の価格を読めませんでした。手で入れてください。";
+    if (opts.tag) ro.textContent = (bc ? `バーコード：JAN ${bc.code}。` : "バーコードは読めませんでした（JANなしでも追加できます）。") + ro.textContent;
     syncSheet();
   }
   // 枠の中だけを切り出す（画面に映っている範囲と動画の画素を対応させる）
-  function grabFrame() {
+  // W: 文字読み用は1000px。バーコード用(W=0)はカメラの画素のまま（細い値札のバーコードをつぶさないため）
+  function grabFrame(W = 1000) {
     const v = $("video"), fr = document.querySelector(".scan-frame").getBoundingClientRect(), vr = v.getBoundingClientRect();
     const vw = v.videoWidth, vh = v.videoHeight; if (!vw || !vh) return null;
     const sc = Math.max(vr.width / vw, vr.height / vh), ox = vr.left + (vr.width - vw * sc) / 2, oy = vr.top + (vr.height - vh * sc) / 2;
     const sx = Math.max(0, (fr.left - ox) / sc), sy = Math.max(0, (fr.top - oy) / sc), sw = Math.min(vw - sx, fr.width / sc), sh = Math.min(vh - sy, fr.height / sc);
-    const W = 1000, H = Math.round(sh * W / sw), c = document.createElement("canvas"); c.width = W; c.height = H;
+    if (!W) W = Math.round(sw);
+    const H = Math.round(sh * W / sw), c = document.createElement("canvas"); c.width = W; c.height = H;
     c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, W, H); return c;
   }
+  // 止めた写真からJANを読む（Android＝BarcodeDetector、なければZXing。小さいバーコードは2倍に広げてもう一度）
+  async function decodeShot(c) {
+    const tries = [c];
+    if (c.width < 1600) { const b = document.createElement("canvas"); b.width = c.width * 2; b.height = c.height * 2; const bx = b.getContext("2d"); bx.imageSmoothingEnabled = false; bx.drawImage(c, 0, 0, b.width, b.height); tries.push(b); }
+    for (const img of tries) {
+      try {
+        if ("BarcodeDetector" in window) {
+          const r = await new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a"] }).detect(img);
+          const hit = (r || []).find(x => validJan(x.rawValue)); if (hit) return { code: hit.rawValue, fmt: hit.format };
+        }
+      } catch (e) {}
+      try {
+        if (window.ZXing) {
+          const hints = new Map();
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A]);
+          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+          const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(img)));
+          const res = new ZXing.MultiFormatReader().decode(bmp, hints), code = res.getText();
+          if (validJan(code)) return { code, fmt: ZX_FMT[ZXing.BarcodeFormat[res.getBarcodeFormat()]] || "ean_13" };
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+  window.__decodeShot = decodeShot;
   $("priceSkip").onclick = () => finishPrice(null, true);
   $("priceShot").onclick = async () => {
     const shot = grabFrame(); if (!shot) return;
+    const wantJan = priceCam && !priceCam.opts.jan && (priceCam.opts.tag || priceCam.opts.inSheet);
+    const big = wantJan ? grabFrame(0) : null;
     $("priceShot").disabled = true; $("scanMsg").innerHTML = "<b>値札を読んでいます…</b>";
     try { try { $("video").pause(); } catch (e) {}
+      const bc = big ? await decodeShot(big) : null;
       const w = await ocrWarm();
       const red = colorLayer(shot, "red"), dark = colorLayer(shot, "dark");
       const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
       const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
       const res = parseTag(rt, dt);
-      if (!res) { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>読めませんでした</b><br>値札に近づけて、もう一度「価格を読む」"; return; }
-      finishPrice(res);
+      if (!res && !bc) { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = `<b>読めませんでした</b><br>値札に近づけて、もう一度「${$("priceShot").textContent}」`; return; }
+      finishPrice(res, false, bc);
     } catch (e) {
       try { $("video").play(); } catch (e2) {} $("priceShot").disabled = false;
       $("scanMsg").innerHTML = "<b>読み取りの部品を読み込めませんでした</b><br>電波を確かめるか、「価格は手で入れる」を押してください";
