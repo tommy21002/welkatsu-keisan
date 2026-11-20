@@ -2029,20 +2029,22 @@ input[type=text],input[type=number],input[inputmode]{
     setScanMode("price"); $("scan").hidden = false;
     $("priceShot").textContent = opts.tag ? "値札を読む" : "価格を読む";
     $("priceSkip").textContent = opts.tag ? "閉じる" : "価格は手で入れる";
-    $("scanMsg").innerHTML = opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れて「値札を読む」</b><br>値札に近づけて、枠いっぱいに入れると読みやすい"
-      : (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れて「価格を読む」</b>" : "<b>値札の価格を枠に入れて「価格を読む」</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
+    $("scanMsg").innerHTML = opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れると自動で読みます</b><br>近づけて枠いっぱいに。読めない時は「値札を読む」"
+      : (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れると自動で読みます</b>" : "<b>値札の価格を枠に入れると自動で読みます</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
     priceCam = { stream: null, opts };
     try {
       // 値札の細いバーコードも読めるよう、できるだけ細かい映像を頼む（対応しない機種は自動で下がる）
       const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
       if (!priceCam) { st.getTracks().forEach(t => t.stop()); return; }
       priceCam.stream = st; const v = $("video"); v.srcObject = st; await v.play();
+      startAutoLoop();
     } catch (e) {
       $("scanMsg").innerHTML = "<b>カメラを起動できませんでした</b><br>「価格は手で入れる」を押してください";
       $("priceShot").disabled = true;
     }
   }
   function stopPriceCam() {
+    stopAutoLoop();
     if (priceCam && priceCam.stream) priceCam.stream.getTracks().forEach(t => t.stop());
     priceCam = null; const v = $("video"); if (v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} v.srcObject = null; }
     $("scan").hidden = true; setScanMode("barcode");
@@ -2123,7 +2125,7 @@ input[type=text],input[type=number],input[inputmode]{
     setTimeout(monoeyeFlash, 0);
     const msg = `カゴ${S.cur + 1}に ${yen2(item.unit)}円 を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
     if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
-    else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れて「値札を読む」</b><br>終わったら「閉じる」"; }
+    else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れてください（自動で読みます）</b><br>終わったら「閉じる」"; }
     $("scanAddedText").textContent = msg; $("scanAdded").hidden = false; $("scanUndo").disabled = false;
     return true;
   }
@@ -2133,20 +2135,46 @@ input[type=text],input[type=number],input[inputmode]{
     if (i >= 0) { b.items.splice(i, 1); save(); render(); }
     lastAdded = null; $("scanAddedText").textContent = "取り消しました"; $("scanUndo").disabled = true;
   };
-  $("priceShot").onclick = async () => {
-    const shot = grabFrame(); if (!shot) return;
+  // 枠の中を1回読む。auto=true（自動）の時は、赤い価格が見えない画面はすぐ打ち切る（スマホの負担を減らす）
+  async function analyzeShot(auto) {
+    const shot = grabFrame(); if (!shot) return null;
+    const red = colorLayer(shot, "red");
+    if (auto && red.ratio <= 0.003) return { res: null, bc: null };
     const wantJan = priceCam && !priceCam.opts.jan && (priceCam.opts.tag || priceCam.opts.inSheet);
-    const big = wantJan ? grabFrame(0) : null;
+    const bc = wantJan ? await decodeShot(grabFrame(0)) : null;
+    const w = await ocrWarm(), dark = colorLayer(shot, "dark");
+    const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
+    const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
+    return { res: parseTag(rt, dt), bc };
+  }
+  // ---- 自動で読む：約0.8秒ごと。2回続けて同じ価格の時だけ確定。同じ値札を映したままでは続けて入れない ----
+  let autoTimer = 0, autoBusy = false, autoPrev = null, autoBlockKey = null;
+  function startAutoLoop() { stopAutoLoop(); autoBlockKey = null; autoTimer = setInterval(autoTick, 800); }
+  function stopAutoLoop() { clearInterval(autoTimer); autoTimer = 0; autoPrev = null; }
+  async function autoTick() {
+    if (autoBusy || !priceCam || !priceCam.stream || $("priceShot").disabled) return;
+    const v = $("video"); if (v.paused || !v.videoWidth) return;
+    autoBusy = true;
+    try {
+      const out = await analyzeShot(true);
+      if (!priceCam || $("priceShot").disabled || !autoTimer) return;
+      const key = out && out.res ? String(out.res.incl) : null;
+      if (!key) { autoPrev = null; autoBlockKey = null; return; } // 値札が枠から外れた＝次の値札を受け付ける
+      if (key === autoBlockKey) return;
+      if (!autoPrev || autoPrev.key !== key) { autoPrev = { key, bc: out.bc }; return; } // 1回目は様子見
+      const bc = out.bc || autoPrev.bc; autoPrev = null;
+      monoeyeFlash();
+      if (tryAutoAdd(out.res, bc)) { autoBlockKey = key; return; }
+      stopAutoLoop(); finishPrice(out.res, false, bc); // 自信がない・上限超え・追加画面から → 確認画面へ
+    } catch (e) {} finally { autoBusy = false; }
+  }
+  $("priceShot").onclick = async () => {
+    if (!grabFrame()) return;
     $("priceShot").disabled = true; $("scanMsg").innerHTML = "<b>値札を読んでいます…</b>";
     try { try { $("video").pause(); } catch (e) {}
-      const bc = big ? await decodeShot(big) : null;
-      const w = await ocrWarm();
-      const red = colorLayer(shot, "red"), dark = colorLayer(shot, "dark");
-      const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
-      const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
-      const res = parseTag(rt, dt);
+      const { res, bc } = await analyzeShot(false);
       if (!res && !bc) { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = `<b>読めませんでした</b><br>値札に近づけて、もう一度「${$("priceShot").textContent}」`; return; }
-      if (tryAutoAdd(res, bc)) return;
+      if (tryAutoAdd(res, bc)) { autoBlockKey = String(res.incl); autoPrev = null; return; }
       finishPrice(res, false, bc);
     } catch (e) {
       try { $("video").play(); } catch (e2) {} $("priceShot").disabled = false;
