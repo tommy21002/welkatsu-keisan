@@ -1200,6 +1200,28 @@ input[type=text],input[type=number],input[inputmode]{
     linear-gradient(-45deg,var(--ng) 8.6px,transparent 9.2px);
 }
 
+/* 入力画面を小さく（数字キーボードの上に全部収まるように） */
+.sheet{padding-top:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+.sheet-in{gap:7px}
+.sheet h2{font-size:15px}
+.sheet .readout{padding:5px 8px;font-size:12px}
+.sheet .janline{font-size:11px;line-height:1.35}
+.sheet .field{gap:2px}
+.sheet .field>span{font-size:11px}
+.sheet input[type=text]{min-height:38px;padding:6px 10px}
+.sheet .price-in{font-size:26px;min-height:44px;padding:4px 12px}
+.sheet .seg button{min-height:38px;font-size:13px}
+.sheet .qty button.q{height:38px;width:40px;font-size:18px}
+.sheet .qty .step button{min-height:38px}
+.sheet .preview{padding:6px 10px;font-size:14px}
+.sheet .preview small{font-size:12px}
+.sheet-act button{height:46px;font-size:16px}
+.sheet-act.three #cancelBtn{height:38px;font-size:14px}
+/* キーボード表示中: 補足の文字を隠してさらに詰める */
+.sheet.kb{padding-bottom:8px}
+.sheet.kb #janHint,.sheet.kb .preview small{display:none}
+.sheet.kb .sheet-in{gap:5px}
+
 /* 読み取り中インジケータ */
 .busy{
   display:flex;
@@ -1433,7 +1455,7 @@ input[type=text],input[type=number],input[inputmode]{
     <div class="readout" id="readout" hidden></div>
     <div class="janline" id="janline" hidden>読み取った中身：<span id="janFmt"></span> <b id="janVal"></b><br><span id="janHint"></span></div>
     <label class="field" for="fPrice"><span>価格（1個あたり）</span>
-      <input id="fPrice" class="price-in" inputmode="numeric" pattern="[0-9]*" placeholder="0" autocomplete="off">
+      <input id="fPrice" class="price-in" type="text" inputmode="decimal" placeholder="0" autocomplete="off" enterkeyhint="done">
     </label>
     <div class="seg" id="fTax" role="group" aria-label="価格の種類">
       <button type="button" data-tax="incl" aria-pressed="true">税込</button>
@@ -1468,6 +1490,9 @@ input[type=text],input[type=number],input[inputmode]{
   const KEY = "welkatsu5000-v1";
   const $ = id => document.getElementById(id);
   const yen = n => Math.round(n).toLocaleString("ja-JP");
+  // 小数（値札の税込 354.24円 など）は第2位まで表示。整数ならそのまま
+  const yen2 = n => { const c = Math.round(n * 100); return c % 100 === 0 ? yen(c / 100) : (c / 100).toLocaleString("ja-JP", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  const cents = n => Math.round(n * 100);
 
   // ---- 状態 ----
   const fresh = () => ({ baskets: [{ items: [] }], cur: 0, limit: 5000, rate: 1.5, memo: {} });
@@ -1479,12 +1504,13 @@ input[type=text],input[type=number],input[inputmode]{
   // ---- 計算（純粋関数） ----
   const TAX = { ex8: 0.08, ex10: 0.10 };
   function totalOf(items) {
+    // 小数の誤差を出さないよう、銭（1/100円）の整数で足してから1円未満を切り捨てる
     let incl = 0, ex8 = 0, ex10 = 0;
     for (const it of items) {
-      const v = it.unit * it.qty;
+      const v = cents(it.unit) * it.qty;
       if (it.tax === "ex8") ex8 += v; else if (it.tax === "ex10") ex10 += v; else incl += v;
     }
-    return incl + Math.floor(ex8 * 108 / 100) + Math.floor(ex10 * 110 / 100);
+    return Math.floor(incl / 100) + Math.floor(ex8 * 108 / 10000) + Math.floor(ex10 * 110 / 10000);
   }
   const capYen = () => Math.floor(S.limit * S.rate + 1e-9);
   const needPt = total => total <= 0 ? 0 : Math.ceil(total / S.rate - 1e-9);
@@ -1495,7 +1521,7 @@ input[type=text],input[type=number],input[inputmode]{
     if (cap - total < Math.max(150, cap * 0.02)) return "warn";
     return "ok";
   }
-  const lineAmt = it => it.tax === "incl" ? it.unit * it.qty : Math.floor(it.unit * it.qty * (100 + TAX[it.tax] * 100) / 100);
+  const lineAmt = it => it.tax === "incl" ? cents(it.unit) * it.qty / 100 : Math.floor(cents(it.unit) * it.qty * (100 + TAX[it.tax] * 100) / 10000);
   window.__welkatsuCalc = { totalOf, needPt, judge, capYen };
 
   // ---- 表示 ----
@@ -1533,15 +1559,15 @@ input[type=text],input[type=number],input[inputmode]{
     const list = $("list"); list.replaceChildren();
     if (!items.length) {
       const e = document.createElement("div"); e.className = "empty";
-      e.innerHTML = `<b>このカゴはまだ空です</b><ol><li>下の「バーコード」で値札か商品のバーコードを読む</li><li>価格を入れて、個数を選んで「追加する」（同じ商品は2回目から価格が自動で出ます）</li><li>入れるとNGになる商品は、追加画面に「カゴ2へ入れる」ボタンが出ます。押すと上限内に収まるカゴへ入ります</li><li>下の「カゴの一覧」で、カゴごとの金額とポイントをレジ前に確認できます</li></ol><span>バーコードがない時は「手入力」で価格だけ打ち込めます。</span>`;
+      e.innerHTML = `<b>このカゴはまだ空です</b><ol><li>下の「バーコード」で値札か商品のバーコードを読む</li><li>価格を入れて、個数を選んで「追加する」（値札の小数 354.24 もそのまま打てます）</li><li>入れるとNGになる商品は、追加画面に「カゴ2へ入れる」ボタンが出ます。押すと上限内に収まるカゴへ入ります</li><li>下の「カゴの一覧」で、カゴごとの金額とポイントをレジ前に確認できます</li></ol><span>バーコードがない時は「手入力」で価格だけ打ち込めます。</span>`;
       list.append(e);
     }
     items.forEach((it, idx) => {
       const row = document.createElement("div"); row.className = "item";
       const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = it.name || "（名前なし）";
-      const amt = document.createElement("div"); amt.className = "amt num"; amt.textContent = yen(lineAmt(it)) + "円";
+      const amt = document.createElement("div"); amt.className = "amt num"; amt.textContent = yen2(lineAmt(it)) + "円";
       const sub = document.createElement("div"); sub.className = "sub num";
-      sub.textContent = `${yen(it.unit)}円 × ${it.qty}`;
+      sub.textContent = `${yen2(it.unit)}円 × ${it.qty}`;
       if (it.tax !== "incl") { const c = document.createElement("span"); c.className = "taxchip"; c.textContent = it.tax === "ex8" ? "税抜8%" : "税抜10%"; sub.append(c); }
       const ctl = document.createElement("div"); ctl.className = "ctl";
       const step = document.createElement("div"); step.className = "step";
@@ -1667,19 +1693,41 @@ input[type=text],input[type=number],input[inputmode]{
     $("janHint").textContent = jan ? priceHint(jan, fmt) : "";
     const memo = jan && S.memo[jan];
     if (memo) {
-      draft.tax = memo.tax || "incl"; $("fPrice").value = memo.unit; $("fName").value = memo.name || "";
+      // 価格は入れない（値札の価格を毎回打つ）。商品名と税込/税抜の種類だけ前回から出す
+      draft.tax = memo.tax || "incl"; $("fName").value = memo.name || "";
       const ro = $("readout"); ro.hidden = false;
-      ro.textContent = `前に入れた価格（${yen(memo.unit)}円）を出しました。値札と違えば打ち直してください。`;
+      ro.textContent = memo.unit ? `値札の価格を入れてください（参考：前回 ${yen2(memo.unit)}円）` : "値札の価格を入れてください。";
     } else if (jan) {
       const ro = $("readout"); ro.hidden = false;
-      ro.textContent = "初めての商品です。値札の価格を入れてください（次からは自動で出ます）。";
+      ro.textContent = "値札の価格を入れてください。";
     }
     syncSheet();
     $("backdrop").hidden = false; $("sheet").hidden = false;
-    setTimeout(() => { const f = $("fPrice"); f.focus(); if (memo) f.select(); }, 60);
+    fitSheet();
+    setTimeout(() => { $("fPrice").focus(); }, 60);
   }
-  function closeSheet() { if (readCtl) readCtl.abort(); $("backdrop").hidden = true; $("sheet").hidden = true; draft = null; }
-  function priceVal() { const n = parseInt(($("fPrice").value || "").replace(/[^0-9]/g, ""), 10); return isFinite(n) ? n : 0; }
+  function closeSheet() { if (readCtl) readCtl.abort(); $("backdrop").hidden = true; $("sheet").hidden = true; draft = null; fitSheet(); }
+  // キーボードが出ても入力画面全体がキーボードの真上に収まるようにする（iPhoneは画面の下がキーボードに隠れるため）
+  function fitSheet() {
+    const sh = $("sheet"), vv = window.visualViewport;
+    if (!vv || sh.hidden) { sh.style.bottom = ""; sh.style.maxHeight = ""; return; }
+    const hiddenBelow = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    sh.style.bottom = hiddenBelow + "px";
+    sh.style.maxHeight = Math.floor(vv.height) + "px";
+    sh.classList.toggle("kb", hiddenBelow > 80); // キーボード表示中はさらに詰める
+  }
+  if (window.visualViewport) { visualViewport.addEventListener("resize", fitSheet); visualViewport.addEventListener("scroll", fitSheet); }
+  // ボタンを押した瞬間にキーボードが閉じて画面がずれ、押し直しになるのを防ぐ（入力欄からフォーカスを外さない）
+  $("sheet").addEventListener("pointerdown", e => { if (e.target.closest("button")) e.preventDefault(); });
+  $("sheet").addEventListener("mousedown", e => { if (e.target.closest("button")) e.preventDefault(); });
+  // 価格は小数点第2位まで（354.24 など）。全角数字・読点も受け付ける
+  function cleanPrice(s) {
+    s = String(s || "").replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[,，、]/g, ".").replace(/[^0-9.]/g, "");
+    const i = s.indexOf(".");
+    if (i >= 0) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, "").slice(0, 2);
+    return s;
+  }
+  function priceVal() { const n = parseFloat(cleanPrice($("fPrice").value)); return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0; }
   function syncSheet() {
     if (!draft) return;
     document.querySelectorAll("#fTax button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tax === draft.tax)));
@@ -1706,7 +1754,11 @@ input[type=text],input[type=number],input[inputmode]{
       nb.hidden = true; ab.textContent = "追加する"; ab.className = "primary"; act.classList.remove("three");
     }
   }
-  $("fPrice").addEventListener("input", syncSheet);
+  $("fPrice").addEventListener("input", () => {
+    const f = $("fPrice"), c = cleanPrice(f.value);
+    if (c !== f.value) f.value = c; // 小数第3位以降・数字以外は打てないようにする
+    syncSheet();
+  });
   $("fTax").addEventListener("click", e => {
     const b = e.target.closest("button[data-tax]"); if (!b || !draft) return;
     draft.tax = b.dataset.tax;
