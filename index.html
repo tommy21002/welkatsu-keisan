@@ -1388,6 +1388,11 @@ input[type=text],input[type=number],input[inputmode]{
   transform:translateY(-50%);
   background:linear-gradient(90deg,transparent,rgba(156,108,224,.88) 20%,rgba(255,46,147,.9) 50%,rgba(156,108,224,.88) 80%,transparent);
 }
+/* 値札の価格を読むモード: 枠を少し大きく・照準を消す */
+.scan.price .scan-frame{width:min(90%,420px);aspect-ratio:2/1}
+.scan.price .scan-frame::before,.scan.price .scan-frame::after{display:none}
+.sheet .price-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sheet .ocr-btn{min-height:30px;padding:2px 10px;font-size:12px;font-weight:700;border:1.5px solid var(--dom-purple);background:transparent;color:var(--ink)}
 .scan-msg{font-size:14px}
 .scan-msg b{font-size:16px}
 
@@ -1491,6 +1496,8 @@ input[type=text],input[type=number],input[inputmode]{
   <div class="scan-bot">
     <button type="button" class="close" id="scanClose">閉じる</button>
     <button type="button" class="manual" id="scanManual">価格を手入力</button>
+    <button type="button" class="close" id="priceSkip" hidden>価格は手で入れる</button>
+    <button type="button" class="manual" id="priceShot" hidden>価格を読む</button>
   </div>
 </section>
 
@@ -1501,7 +1508,7 @@ input[type=text],input[type=number],input[inputmode]{
     <div class="busy" id="busy" hidden><div class="spin"></div><span id="busyText">値札を読んでいます…</span></div>
     <div class="readout" id="readout" hidden></div>
     <div class="janline" id="janline" hidden>読み取った中身：<span id="janFmt"></span> <b id="janVal"></b><br><span id="janHint"></span></div>
-    <label class="field" for="fPrice"><span>価格（1個あたり）</span>
+    <label class="field" for="fPrice"><span class="price-head">価格（1個あたり）<button type="button" class="ocr-btn" id="ocrBtn">値札から読む</button></span>
       <input id="fPrice" class="price-in" type="text" inputmode="decimal" placeholder="0" autocomplete="off" enterkeyhint="done">
     </label>
     <div class="seg" id="fTax" role="group" aria-label="価格の種類">
@@ -1871,10 +1878,11 @@ input[type=text],input[type=number],input[inputmode]{
     }
     lastRead = { code: "", n: 0 };
     try { S.scanLog = [{ t: Date.now(), fmt: fmt || "", code }].concat(S.scanLog || []).slice(0, 30); save(); renderLog(); } catch (e) {}
-    beep(); stopScan(); openSheet(false, code, fmt);
+    beep(); stopScan(); startPriceCam({ jan: code, fmt });
   }
   async function startScan() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
+    setScanMode("barcode"); ocrWarm();
     $("scan").hidden = false; scanning = true;
     $("scanMsg").innerHTML = "<b>値札か商品のバーコードを枠に入れてください</b>";
     const video = $("video");
@@ -1913,7 +1921,135 @@ input[type=text],input[type=number],input[inputmode]{
     const v = $("video"); if (v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} v.srcObject = null; }
     $("scan").hidden = true;
   }
-  document.addEventListener("visibilitychange", () => { if (document.hidden && scanning) stopScan(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && scanning) stopScan(); if (document.hidden && priceCam) stopPriceCam(); });
+
+  // ---- 値札の価格を読む（Android・iPhone共通。スマホの中で文字を読み、写真は外へ送らない） ----
+  // 値札は「本体価格＝赤の大きい数字」「税込＝黒の小数入り」。黒の斜め太字は読み違えやすいので、
+  // 赤い本体価格を読んで税込を計算し（328×1.08＝354.24）、税率8%/10%は黒い行の読み取りに近い方を選ぶ
+  const OCR_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js";
+  let ocrWorkerP = null;
+  function ocrWarm() { // 読み取り部品を前もって用意（初回だけ数MBを取り込む）
+    if (ocrWorkerP) return ocrWorkerP;
+    ocrWorkerP = new Promise((res, rej) => {
+      const go = () => Tesseract.createWorker("eng").then(async w => { await w.setParameters({ tessedit_char_whitelist: "0123456789.,%", tessedit_pageseg_mode: "6" }); res(w); }, rej);
+      if (window.Tesseract) return go();
+      const s = document.createElement("script"); s.src = OCR_SRC; s.onload = go; s.onerror = () => rej(new Error("ocr_load")); document.head.append(s);
+    }).catch(e => { ocrWorkerP = null; throw e; });
+    ocrWorkerP.catch(() => {});
+    return ocrWorkerP;
+  }
+  // 色ごとに「文字＝黒・背景＝白」の画像にする（red＝赤字、dark＝黒字）
+  function colorLayer(src, kind) {
+    const W = src.width, H = src.height, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const x = c.getContext("2d"); x.drawImage(src, 0, 0);
+    const d = x.getImageData(0, 0, W, H), p = d.data; let n = 0, x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let i = 0; i < W * H; i++) {
+      const r = p[i * 4], g = p[i * 4 + 1], b = p[i * 4 + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      const on = kind === "red" ? (r - Math.max(g, b) > 50 && r > 110) : (mx < 120 && mx - mn < 60);
+      const v = on ? 0 : 255; p[i * 4] = p[i * 4 + 1] = p[i * 4 + 2] = v;
+      if (on) { n++; const X = i % W, Y = (i / W) | 0; if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+    }
+    x.putImageData(d, 0, 0); return { canvas: c, ratio: n / (W * H), box: x1 >= 0 ? { x0, y0, x1, y1 } : null };
+  }
+  // 赤い本体価格のすぐ下（税込の行）だけを切り出す。商品名やバーコードの数字を読まないため
+  function belowRed(darkCanvas, box) {
+    const W = darkCanvas.width, H = darkCanvas.height, rh = box.y1 - box.y0, rw = box.x1 - box.x0;
+    const sx = Math.max(0, Math.round(box.x0 - rw * 0.6)), sy = Math.max(0, Math.round(box.y1 - rh * 0.15));
+    const sw = Math.min(W, Math.round(box.x1 + rw * 0.4)) - sx, sh = Math.min(H, Math.round(box.y1 + rh * 0.9)) - sy;
+    if (sw < 20 || sh < 10) return darkCanvas;
+    const c = document.createElement("canvas"); c.width = sw; c.height = sh;
+    c.getContext("2d").drawImage(darkCanvas, sx, sy, sw, sh, 0, 0, sw, sh); return c;
+  }
+  // 2つの数字の並びがどれだけ似ているか（最長共通部分列の長さ）
+  function lcs(a, b) { const m = Array(b.length + 1).fill(0); for (const ca of a) { let prev = 0; for (let j = 1; j <= b.length; j++) { const t = m[j]; m[j] = ca === b[j - 1] ? prev + 1 : Math.max(m[j], m[j - 1]); prev = t; } } return m[b.length]; }
+  const fix2 = n => (Math.round(n * 100) / 100).toFixed(2);
+  // 読み取った文字から価格を決める（テストしやすいよう純粋関数）
+  function parseTag(redText, darkText) {
+    const nums = s => (String(s || "").match(/\d[\d,]*(?:\.\d+)?/g) || []).map(t => t.replace(/,/g, ""));
+    const ints = nums(redText).map(t => parseInt(t, 10)).filter(v => v >= 1 && v <= 99999);
+    const dark = String(darkText || "").replace(/[^0-9]/g, "");
+    if (ints.length) {
+      const hon = ints.reduce((a, b) => (String(b).length > String(a).length ? b : a)); // いちばん桁の多い赤い数字＝本体価格
+      const c8 = "8" + fix2(hon * 1.08).replace(".", ""), c10 = "10" + fix2(hon * 1.10).replace(".", "");
+      const s8 = lcs(dark, c8), s10 = lcs(dark, c10);
+      const rate = s10 > s8 ? 10 : 8;
+      return { hon, rate, incl: +fix2(hon * (1 + rate / 100)), sure: dark.length >= 3 && Math.max(s8, s10) >= 3 && Math.abs(s8 - s10) >= 2 };
+    }
+    // 赤い数字がない値札：黒の小数入りの数字をそのまま税込とする
+    const dec = nums(darkText).filter(t => /\.\d{2}$/.test(t)).map(Number).filter(v => v >= 1 && v <= 99999);
+    if (dec.length) return { hon: 0, rate: 0, incl: dec[0], sure: false };
+    return null;
+  }
+  window.__parseTag = parseTag;
+
+  let priceCam = null; // { stream, opts }
+  function setScanMode(mode) {
+    const pm = mode === "price";
+    $("scan").classList.toggle("price", pm);
+    $("scanClose").hidden = pm; $("scanManual").hidden = pm;
+    $("priceSkip").hidden = !pm; $("priceShot").hidden = !pm; $("priceShot").disabled = false;
+  }
+  // opts: { jan, fmt } バーコードの続き／{ inSheet:true } 追加画面から
+  async function startPriceCam(opts) {
+    ocrWarm();
+    setScanMode("price"); $("scan").hidden = false;
+    $("scanMsg").innerHTML = (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れて「価格を読む」</b>" : "<b>値札の価格を枠に入れて「価格を読む」</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
+    priceCam = { stream: null, opts };
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      if (!priceCam) { st.getTracks().forEach(t => t.stop()); return; }
+      priceCam.stream = st; const v = $("video"); v.srcObject = st; await v.play();
+    } catch (e) {
+      $("scanMsg").innerHTML = "<b>カメラを起動できませんでした</b><br>「価格は手で入れる」を押してください";
+      $("priceShot").disabled = true;
+    }
+  }
+  function stopPriceCam() {
+    if (priceCam && priceCam.stream) priceCam.stream.getTracks().forEach(t => t.stop());
+    priceCam = null; const v = $("video"); if (v.srcObject) { try { v.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} v.srcObject = null; }
+    $("scan").hidden = true; setScanMode("barcode");
+  }
+  function finishPrice(res, skipped) { // 結果を追加画面へ入れる（skipped＝自分で「手で入れる」を選んだ）
+    const opts = priceCam ? priceCam.opts : {}; stopPriceCam();
+    if (!opts.inSheet) openSheet(false, opts.jan, opts.fmt);
+    else if (draft) { $("backdrop").hidden = false; $("sheet").hidden = false; fitSheet(); }
+    if (!draft || skipped) { if (draft) setTimeout(() => $("fPrice").focus(), 60); return; }
+    const ro = $("readout"); ro.hidden = false;
+    if (res) {
+      draft.tax = "incl"; $("fPrice").value = res.incl;
+      ro.textContent = res.hon
+        ? `値札から読みました：本体 ${yen(res.hon)}円 × ${res.rate}% ＝ 税込 ${yen2(res.incl)}円${res.sure ? "" : "（税率は自信なし）"}。値札と同じか確かめてください。`
+        : `値札から税込 ${yen2(res.incl)}円 と読みました。値札と同じか確かめてください。`;
+    } else ro.textContent = "値札の価格を読めませんでした。手で入れてください。";
+    syncSheet();
+  }
+  // 枠の中だけを切り出す（画面に映っている範囲と動画の画素を対応させる）
+  function grabFrame() {
+    const v = $("video"), fr = document.querySelector(".scan-frame").getBoundingClientRect(), vr = v.getBoundingClientRect();
+    const vw = v.videoWidth, vh = v.videoHeight; if (!vw || !vh) return null;
+    const sc = Math.max(vr.width / vw, vr.height / vh), ox = vr.left + (vr.width - vw * sc) / 2, oy = vr.top + (vr.height - vh * sc) / 2;
+    const sx = Math.max(0, (fr.left - ox) / sc), sy = Math.max(0, (fr.top - oy) / sc), sw = Math.min(vw - sx, fr.width / sc), sh = Math.min(vh - sy, fr.height / sc);
+    const W = 1000, H = Math.round(sh * W / sw), c = document.createElement("canvas"); c.width = W; c.height = H;
+    c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, W, H); return c;
+  }
+  $("priceSkip").onclick = () => finishPrice(null, true);
+  $("priceShot").onclick = async () => {
+    const shot = grabFrame(); if (!shot) return;
+    $("priceShot").disabled = true; $("scanMsg").innerHTML = "<b>値札を読んでいます…</b>";
+    try { try { $("video").pause(); } catch (e) {}
+      const w = await ocrWarm();
+      const red = colorLayer(shot, "red"), dark = colorLayer(shot, "dark");
+      const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
+      const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
+      const res = parseTag(rt, dt);
+      if (!res) { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>読めませんでした</b><br>値札に近づけて、もう一度「価格を読む」"; return; }
+      finishPrice(res);
+    } catch (e) {
+      try { $("video").play(); } catch (e2) {} $("priceShot").disabled = false;
+      $("scanMsg").innerHTML = "<b>読み取りの部品を読み込めませんでした</b><br>電波を確かめるか、「価格は手で入れる」を押してください";
+    }
+  };
+  $("ocrBtn").onclick = e => { e.preventDefault(); if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toastMsg("このブラウザではカメラが使えません"); return; } $("backdrop").hidden = true; $("sheet").hidden = true; startPriceCam({ inSheet: true }); };
   function toastMsg(m) { toast(m, false); }
 
   // ---- 設定 ----
