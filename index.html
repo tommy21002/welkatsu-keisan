@@ -1388,6 +1388,10 @@ input[type=text],input[type=number],input[inputmode]{
   transform:translateY(-50%);
   background:linear-gradient(90deg,transparent,rgba(156,108,224,.88) 20%,rgba(255,46,147,.9) 50%,rgba(156,108,224,.88) 80%,transparent);
 }
+/* 自動でカゴに入れた時の表示（カメラ画面の中） */
+.scan-added{margin-top:8px;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 10px;background:rgba(50,220,134,.16);border-left:4px solid #32DC86;font-size:14px;font-weight:700}
+.scan-added span{flex:1;min-width:0}
+.scan-added button{min-height:36px;padding:0 12px;border:1.5px solid #F2F3F8;background:transparent;color:#F2F3F8;font-weight:700;white-space:nowrap}
 /* 値札の価格を読むモード: 枠を少し大きく・照準を消す */
 .scan.price .scan-frame{width:min(90%,420px);aspect-ratio:2/1}
 .scan.price .scan-frame::before,.scan.price .scan-frame::after{display:none}
@@ -1491,7 +1495,8 @@ input[type=text],input[type=number],input[inputmode]{
 
 <section class="scan" id="scan" hidden aria-label="バーコード読み取り">
   <video id="video" playsinline muted></video>
-  <div class="scan-top"><div class="scan-msg" id="scanMsg"><b>値札か商品のバーコードを枠に入れてください</b></div></div>
+  <div class="scan-top"><div class="scan-msg" id="scanMsg"><b>値札か商品のバーコードを枠に入れてください</b></div>
+    <div class="scan-added" id="scanAdded" hidden><span id="scanAddedText"></span><button type="button" id="scanUndo">取り消す</button></div></div>
   <div class="scan-frame" aria-hidden="true"></div>
   <div class="scan-bot">
     <button type="button" class="close" id="scanClose">閉じる</button>
@@ -1864,13 +1869,14 @@ input[type=text],input[type=number],input[inputmode]{
   const validJan = s => /^(\d{8}|\d{12}|\d{13})$/.test(s);
   const FMT_JA = { ean_13: "JAN(13桁)", ean_8: "JAN(8桁)", upc_a: "UPC", upc_e: "UPC-E", code_128: "CODE128（お店独自の可能性）", itf: "ITF（お店独自の可能性）", code_39: "CODE39（お店独自の可能性）", codabar: "NW-7（お店独自の可能性）", qr_code: "QRコード" };
   const ZX_FMT = { EAN_13: "ean_13", EAN_8: "ean_8", UPC_A: "upc_a", UPC_E: "upc_e", CODE_128: "code_128", ITF: "itf", CODE_39: "code_39", CODABAR: "codabar", QR_CODE: "qr_code" };
-  let lastRead = { code: "", n: 0 };
+  let lastRead = { code: "", n: 0 }, ignoreCode = { code: "", until: 0 };
   function beep() { // 音は鳴らさない（店でうるさいため）。対応端末だけ短く振動
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
   }
   function onCode(raw, fmt) {
     const code = String(raw || "").trim();
     if (!scanning || code.length < 4) return;
+    if (code === ignoreCode.code && Date.now() < ignoreCode.until) return;
     const isJan = /^(ean_13|ean_8|upc_a)$/.test(fmt) && validJan(code);
     if (!isJan) { // JAN以外は読み違いが起きやすいので、同じ中身を2回続けて読めた時だけ採用
       if (lastRead.code === code) lastRead.n++; else lastRead = { code, n: 1 };
@@ -2000,6 +2006,7 @@ input[type=text],input[type=number],input[inputmode]{
     ocrWarm();
     setScanMode("price"); $("scan").hidden = false;
     $("priceShot").textContent = opts.tag ? "値札を読む" : "価格を読む";
+    $("priceSkip").textContent = opts.tag ? "閉じる" : "価格は手で入れる";
     $("scanMsg").innerHTML = opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れて「値札を読む」</b><br>値札に近づけて、枠いっぱいに入れると読みやすい"
       : (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れて「価格を読む」</b>" : "<b>値札の価格を枠に入れて「価格を読む」</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
     priceCam = { stream: null, opts };
@@ -2075,7 +2082,34 @@ input[type=text],input[type=number],input[inputmode]{
     return null;
   }
   window.__decodeShot = decodeShot;
-  $("priceSkip").onclick = () => finishPrice(null, true);
+  $("priceSkip").onclick = () => { if (priceCam && priceCam.opts.tag) { stopPriceCam(); $("scanAdded").hidden = true; } else finishPrice(null, true); };
+  $("scanClose").addEventListener("click", () => { $("scanAdded").hidden = true; });
+
+  // ---- 読めたら確認なしでカゴへ（自信がある・上限内の時だけ）→ そのまま次の商品へ ----
+  let lastAdded = null;
+  function tryAutoAdd(res, bc) {
+    const opts = priceCam ? priceCam.opts : null;
+    if (!opts || opts.inSheet || !res || !res.sure || !res.hon) return false;
+    const jan = opts.jan || (bc && bc.code) || "", memo = jan && S.memo[jan];
+    const item = { name: (memo && memo.name) || "", unit: res.incl, qty: 1, tax: "incl", jan };
+    if (judge(totalOf(basket().items.concat([item]))) === "ng") return false; // 上限を超える時は確認画面で選んでもらう
+    if (bc && !opts.jan) logScan(bc.code, bc.fmt);
+    basket().items.push(item); if (jan) S.memo[jan] = { name: item.name, unit: item.unit, tax: "incl" };
+    save(); render(); lastAdded = { cur: S.cur, item };
+    try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+    const t = totalOf(basket().items), st = judge(t);
+    const msg = `カゴ${S.cur + 1}に ${yen2(item.unit)}円 を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
+    if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
+    else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れて「値札を読む」</b><br>終わったら「閉じる」"; }
+    $("scanAddedText").textContent = msg; $("scanAdded").hidden = false; $("scanUndo").disabled = false;
+    return true;
+  }
+  $("scanUndo").onclick = () => {
+    if (!lastAdded) return;
+    const b = S.baskets[lastAdded.cur], i = b ? b.items.lastIndexOf(lastAdded.item) : -1;
+    if (i >= 0) { b.items.splice(i, 1); save(); render(); }
+    lastAdded = null; $("scanAddedText").textContent = "取り消しました"; $("scanUndo").disabled = true;
+  };
   $("priceShot").onclick = async () => {
     const shot = grabFrame(); if (!shot) return;
     const wantJan = priceCam && !priceCam.opts.jan && (priceCam.opts.tag || priceCam.opts.inSheet);
@@ -2089,6 +2123,7 @@ input[type=text],input[type=number],input[inputmode]{
       const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
       const res = parseTag(rt, dt);
       if (!res && !bc) { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = `<b>読めませんでした</b><br>値札に近づけて、もう一度「${$("priceShot").textContent}」`; return; }
+      if (tryAutoAdd(res, bc)) return;
       finishPrice(res, false, bc);
     } catch (e) {
       try { $("video").play(); } catch (e2) {} $("priceShot").disabled = false;
