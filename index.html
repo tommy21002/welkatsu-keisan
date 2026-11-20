@@ -1388,13 +1388,30 @@ input[type=text],input[type=number],input[inputmode]{
   transform:translateY(-50%);
   background:linear-gradient(90deg,transparent,rgba(156,108,224,.88) 20%,rgba(255,46,147,.9) 50%,rgba(156,108,224,.88) 80%,transparent);
 }
+/* ドムのモノアイ：レールの上をピンクの目が左右に往復し、読めた瞬間に大きく光る */
+.scan-frame::before{
+  left:8%;width:16px;height:16px;transform:translate(-50%,-50%);
+  animation:monoeye 1.6s ease-in-out infinite alternate;
+  box-shadow:0 0 14px 4px rgba(255,46,147,.8),-26px 0 18px -6px rgba(255,46,147,.45),26px 0 18px -6px rgba(255,46,147,.45);
+}
+.scan-frame::after{opacity:.55;box-shadow:0 0 6px rgba(255,46,147,.5)}
+@keyframes monoeye{0%{left:8%}100%{left:92%}}
+.scan.price .scan-frame::before,.scan.price .scan-frame::after{display:block;top:auto;bottom:-10px}
+.scan.price .scan-frame::after{transform:none}
+.scan.price .scan-frame::before{transform:translate(-50%,50%)}
+.scan.hit .scan-frame::before{animation-play-state:paused;width:40px;height:40px;box-shadow:0 0 30px 14px rgba(255,46,147,.95),0 0 80px 30px rgba(255,46,147,.5);transition:width .12s,height .12s}
+.scan.hit .scan-frame{background:
+    linear-gradient(#FF2E93,#FF2E93) 0 0/36px 5px no-repeat,linear-gradient(#FF2E93,#FF2E93) 0 0/5px 36px no-repeat,
+    linear-gradient(#FF2E93,#FF2E93) 100% 0/36px 5px no-repeat,linear-gradient(#FF2E93,#FF2E93) 100% 0/5px 36px no-repeat,
+    linear-gradient(#FF2E93,#FF2E93) 0 100%/36px 5px no-repeat,linear-gradient(#FF2E93,#FF2E93) 0 100%/5px 36px no-repeat,
+    linear-gradient(#FF2E93,#FF2E93) 100% 100%/36px 5px no-repeat,linear-gradient(#FF2E93,#FF2E93) 100% 100%/5px 36px no-repeat}
+@media (prefers-reduced-motion: reduce){ .scan-frame::before{animation:none;left:50%} }
 /* 自動でカゴに入れた時の表示（カメラ画面の中） */
 .scan-added{margin-top:8px;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 10px;background:rgba(50,220,134,.16);border-left:4px solid #32DC86;font-size:14px;font-weight:700}
 .scan-added span{flex:1;min-width:0}
 .scan-added button{min-height:36px;padding:0 12px;border:1.5px solid #F2F3F8;background:transparent;color:#F2F3F8;font-weight:700;white-space:nowrap}
 /* 値札の価格を読むモード: 枠を少し大きく・照準を消す */
 .scan.price .scan-frame{width:min(90%,420px);aspect-ratio:2/1}
-.scan.price .scan-frame::before,.scan.price .scan-frame::after{display:none}
 .sheet .price-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .sheet .ocr-btn{min-height:30px;padding:2px 10px;font-size:12px;font-weight:700;border:1.5px solid var(--dom-purple);background:transparent;color:var(--ink)}
 .scan-msg{font-size:14px}
@@ -1872,6 +1889,11 @@ input[type=text],input[type=number],input[inputmode]{
   let lastRead = { code: "", n: 0 }, ignoreCode = { code: "", until: 0 };
   function beep() { // 音は鳴らさない（店でうるさいため）。対応端末だけ短く振動
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+    monoeyeFlash();
+  }
+  let hitTimer = 0;
+  function monoeyeFlash() { // 読めた瞬間にモノアイを光らせる（0.45秒）
+    const s = $("scan"); s.classList.add("hit"); clearTimeout(hitTimer); hitTimer = setTimeout(() => s.classList.remove("hit"), 450);
   }
   function onCode(raw, fmt) {
     const code = String(raw || "").trim();
@@ -2098,6 +2120,7 @@ input[type=text],input[type=number],input[inputmode]{
     save(); render(); lastAdded = { cur: S.cur, item };
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
     const t = totalOf(basket().items), st = judge(t);
+    setTimeout(monoeyeFlash, 0);
     const msg = `カゴ${S.cur + 1}に ${yen2(item.unit)}円 を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
     if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
     else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れて「値札を読む」</b><br>終わったら「閉じる」"; }
