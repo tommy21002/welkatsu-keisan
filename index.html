@@ -887,6 +887,32 @@ details.settings summary::after{
 details.settings[open] summary::after{
   transform:rotate(-135deg);
 }
+/* お店の記録 */
+details.stores summary small{margin-left:8px;font-weight:400;font-size:12px}
+.st-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:8px}
+.st-row input{min-width:0}
+.st-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.st-btns button{min-height:46px;font-size:15px;font-weight:700;border:2px solid currentColor}
+.st-btns .st-ok{color:var(--ok);background:var(--ok-bg)}
+.st-btns .st-ng{color:var(--ng);background:var(--ng-bg)}
+.st-btns button:disabled{opacity:.4}
+.st-list{display:grid;gap:8px;margin-top:12px}
+.st-card{border:2px solid var(--line);border-left-width:6px;background:var(--surface-2);padding:8px 10px}
+.st-card[data-last="ok"]{border-left-color:var(--ok)}
+.st-card[data-last="ng"]{border-left-color:var(--ng)}
+details.settings .st-card summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;min-height:0;color:var(--ink);font-size:15px}
+details.settings .st-card summary::-webkit-details-marker{display:none}
+details.settings .st-card summary::after{content:none;display:none}
+.st-card .nm{font-weight:700;overflow-wrap:anywhere}
+.st-card .badge{font-size:12px;font-weight:700;padding:2px 8px;border:1.5px solid currentColor;white-space:nowrap}
+.st-card[data-last="ok"] .badge{color:var(--ok);background:var(--ok-bg)}
+.st-card[data-last="ng"] .badge{color:var(--ng);background:var(--ng-bg)}
+.st-card .cnt{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.st-hist{list-style:none;margin:8px 0 0;padding:6px 0 0;border-top:1px dashed var(--line);display:grid;gap:6px;font-size:13px}
+.st-hist li{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:6px;align-items:center}
+.st-hist .r-ok{color:var(--ok);font-weight:700}
+.st-hist .r-ng{color:var(--ng);font-weight:700}
+.st-hist .m{color:var(--muted);overflow-wrap:anywhere}
 .set-grid{
   display:grid;
   gap:10px;
@@ -1412,6 +1438,26 @@ input[type=text],input[type=number],input[inputmode]{
 
   <section class="summary" id="summary" hidden aria-label="カゴの一覧"></section>
 
+  <details class="settings stores" id="storesBox">
+    <summary><span>お店の記録（会計を分けてもらえたか）<small id="storeCount"></small></span></summary>
+    <div class="set-grid">
+      <label for="stName">店名
+        <input id="stName" type="text" list="stList" autocomplete="off" placeholder="例：ウエルシア ○○店">
+      </label>
+      <datalist id="stList"></datalist>
+      <div class="st-row">
+        <label for="stDate">日付<input id="stDate" type="date"></label>
+        <label for="stMemo">メモ（なくてもOK）<input id="stMemo" type="text" autocomplete="off" placeholder="例：夕方の店員さんはOK"></label>
+      </div>
+      <div class="st-btns">
+        <button type="button" class="st-ok" data-ok="1">分けてもらえた</button>
+        <button type="button" class="st-ng" data-ok="0">断られた</button>
+      </div>
+    </div>
+    <div class="st-list" id="storeList"></div>
+    <p class="note">記録はこのスマホの中だけに残ります（カゴを全部消しても残ります）。前回の結果が「断られた」のお店は赤で出ます。</p>
+  </details>
+
   <details class="settings">
     <summary>設定（上限ポイント・倍率）</summary>
     <div class="set-grid">
@@ -1885,6 +1931,63 @@ input[type=text],input[type=number],input[inputmode]{
     n.onclick = restore;
     host.append(t, y, n);
   }
+
+  // ---- お店の記録（5,000ptごとに会計を分けてもらえたか） ----
+  // S.stores = [{ id, d:"YYYY-MM-DD", store, ok:true/false, memo }]。カゴの初期化では消さない
+  const todayStr = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+  const normStore = s => String(s || "").trim().replace(/\s+/g, " ");
+  const mdStr = d => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ""); return m ? `${+m[2]}/${+m[3]}` : d; };
+  function renderStores() {
+    const log = Array.isArray(S.stores) ? S.stores : [];
+    const groups = new Map();
+    for (const r of log) { const k = normStore(r.store); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+    const sorted = [...groups.entries()].map(([name, rs]) => {
+      rs.sort((a, b) => (b.d || "").localeCompare(a.d || "") || (b.id || 0) - (a.id || 0));
+      return { name, rs, last: rs[0] };
+    }).sort((a, b) => (b.last.d || "").localeCompare(a.last.d || "") || (b.last.id || 0) - (a.last.id || 0));
+    $("storeCount").textContent = sorted.length ? `${sorted.length}店` : "";
+    const dl = $("stList"); dl.replaceChildren();
+    sorted.forEach(g => { const o = document.createElement("option"); o.value = g.name; dl.append(o); });
+    const host = $("storeList"); host.replaceChildren();
+    if (!sorted.length) { const p = document.createElement("div"); p.className = "janline"; p.textContent = "まだ記録がありません。会計の後に店名を入れて「分けてもらえた」か「断られた」を押してください。"; host.append(p); return; }
+    for (const g of sorted) {
+      const okN = g.rs.filter(r => r.ok).length, ngN = g.rs.length - okN;
+      const card = document.createElement("details"); card.className = "st-card"; card.dataset.last = g.last.ok ? "ok" : "ng";
+      const sm = document.createElement("summary");
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = g.name;
+      const bd = document.createElement("span"); bd.className = "badge"; bd.textContent = g.last.ok ? "前回OK" : "前回 断られた";
+      const cnt = document.createElement("span"); cnt.className = "cnt";
+      cnt.textContent = `分けてもらえた ${okN}回・断られた ${ngN}回／最後 ${mdStr(g.last.d)}${g.last.memo ? "「" + g.last.memo + "」" : ""}`;
+      sm.append(nm, bd, cnt); card.append(sm);
+      const ul = document.createElement("ul"); ul.className = "st-hist";
+      for (const r of g.rs) {
+        const li = document.createElement("li");
+        const d = document.createElement("span"); d.textContent = mdStr(r.d);
+        const res = document.createElement("span"); res.className = r.ok ? "r-ok" : "r-ng"; res.textContent = r.ok ? "OK" : "断られた";
+        const m = document.createElement("span"); m.className = "m"; m.textContent = r.memo || "";
+        const del = document.createElement("button"); del.type = "button"; del.className = "mini"; del.textContent = "消す";
+        del.onclick = () => { // 2回押しで消す（押し間違い防止）
+          if (del.dataset.arm !== "1") { del.dataset.arm = "1"; del.textContent = "本当に消す"; del.classList.add("del"); return; }
+          S.stores = S.stores.filter(x => x !== r); save(); renderStores(); toast("記録を1件消しました", false);
+        };
+        li.append(d, res, m, del); ul.append(li);
+      }
+      card.append(ul); host.append(card);
+    }
+  }
+  function syncStoreBtns() { const has = !!normStore($("stName").value); document.querySelectorAll(".st-btns button").forEach(b => { b.disabled = !has; }); }
+  $("stDate").value = todayStr();
+  $("stName").addEventListener("input", syncStoreBtns);
+  document.querySelector(".st-btns").addEventListener("click", e => {
+    const b = e.target.closest("button[data-ok]"); if (!b || b.disabled) return;
+    const store = normStore($("stName").value); if (!store) return;
+    if (!Array.isArray(S.stores)) S.stores = [];
+    S.stores.push({ id: Date.now(), d: $("stDate").value || todayStr(), store, ok: b.dataset.ok === "1", memo: $("stMemo").value.trim() });
+    save(); $("stMemo").value = ""; renderStores();
+    toast(`${store}：${b.dataset.ok === "1" ? "分けてもらえた" : "断られた"} を記録しました`, false);
+  });
+  syncStoreBtns();
+  renderStores();
 
   render();
   renderLog();
