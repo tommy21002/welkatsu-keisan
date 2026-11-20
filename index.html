@@ -1878,7 +1878,11 @@ input[type=text],input[type=number],input[inputmode]{
   // ---- バーコード読み取り（カメラ） ----
   // Androidの Chrome は標準の BarcodeDetector、iPhone は ZXing で読む。読めるのは商品番号(JAN)だけで、価格は入っていない
   $("keyBtn").onclick = () => openSheet(false);
-  $("camBtn").onclick = startScan;
+  // 「バーコード」＝最初から自動で読む画面（値札ならJAN＋価格、商品のJANだけならJAN→続けて値札の価格）
+  $("camBtn").onclick = () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { openSheet(false); toastMsg("このブラウザではカメラが使えません。手入力してください"); return; }
+    $("scanAdded").hidden = true; startPriceCam({ tag: true, unified: true });
+  };
   $("scanClose").onclick = stopScan;
   $("scanManual").onclick = () => { stopScan(); startPriceCam({ tag: true }); };
 
@@ -2029,7 +2033,8 @@ input[type=text],input[type=number],input[inputmode]{
     setScanMode("price"); $("scan").hidden = false;
     $("priceShot").textContent = opts.tag ? "値札を読む" : "価格を読む";
     $("priceSkip").textContent = opts.tag ? "閉じる" : "価格は手で入れる";
-    $("scanMsg").innerHTML = opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れると自動で読みます</b><br>近づけて枠いっぱいに。読めない時は「値札を読む」"
+    $("scanMsg").innerHTML = opts.unified ? "<b>値札か商品のバーコードを枠に入れると自動で読みます</b><br>値札は近づけて枠いっぱいに（JANと価格を一度に読みます）"
+      : opts.tag ? "<b>値札全体（バーコードと価格）を枠に入れると自動で読みます</b><br>近づけて枠いっぱいに。読めない時は「値札を読む」"
       : (opts.jan ? "<b>読み取りました。続けて値札の価格を枠に入れると自動で読みます</b>" : "<b>値札の価格を枠に入れると自動で読みます</b>") + "<br>赤い本体価格と、下の税込の行が両方入るように";
     priceCam = { stream: null, opts };
     try {
@@ -2081,6 +2086,11 @@ input[type=text],input[type=number],input[inputmode]{
     const H = Math.round(sh * W / sw), c = document.createElement("canvas"); c.width = W; c.height = H;
     c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, W, H); return c;
   }
+  function grabFull() { // 映像全体（長い辺を1600pxまでに縮める）
+    const v = $("video"), vw = v.videoWidth, vh = v.videoHeight; if (!vw || !vh) return null;
+    const k = Math.min(1, 1600 / Math.max(vw, vh)), c = document.createElement("canvas"); c.width = Math.round(vw * k); c.height = Math.round(vh * k);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height); return c;
+  }
   // 止めた写真からJANを読む（Android＝BarcodeDetector、なければZXing。小さいバーコードは2倍に広げてもう一度）
   async function decodeShot(c) {
     const tries = [c];
@@ -2124,7 +2134,13 @@ input[type=text],input[type=number],input[inputmode]{
     const t = totalOf(basket().items), st = judge(t);
     setTimeout(monoeyeFlash, 0);
     const msg = `カゴ${S.cur + 1}に ${yen2(item.unit)}円 を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
-    if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
+    if (opts.unified) { // 最初の待ち受けに戻る（同じ商品のJANは3秒読まない）
+      if (opts.jan) ignoreCode = { code: opts.jan, until: Date.now() + 3000 };
+      Object.assign(opts, { jan: "", fmt: "", tag: true });
+      $("priceShot").textContent = "値札を読む"; $("priceSkip").textContent = "閉じる";
+      try { $("video").play(); } catch (e) {} $("priceShot").disabled = false;
+      $("scanMsg").innerHTML = "<b>次の値札か商品のバーコードを枠に入れてください（自動で読みます）</b><br>終わったら「閉じる」";
+    } else if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
     else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れてください（自動で読みます）</b><br>終わったら「閉じる」"; }
     $("scanAddedText").textContent = msg; $("scanAdded").hidden = false; $("scanUndo").disabled = false;
     return true;
@@ -2139,8 +2155,11 @@ input[type=text],input[type=number],input[inputmode]{
   async function analyzeShot(auto) {
     const shot = grabFrame(); if (!shot) return null;
     const red = colorLayer(shot, "red");
-    if (auto && red.ratio <= 0.003) return { res: null, bc: null };
     const wantJan = priceCam && !priceCam.opts.jan && (priceCam.opts.tag || priceCam.opts.inSheet);
+    if (auto && red.ratio <= 0.003) { // 赤い価格なし＝商品のJANだけかも。商品のバーコードは大きいので映像全体から探す
+      if (!wantJan) return { res: null, bc: null };
+      return { res: null, bc: (await decodeShot(grabFrame(0))) || (await decodeShot(grabFull())) };
+    }
     const bc = wantJan ? await decodeShot(grabFrame(0)) : null;
     const w = await ocrWarm(), dark = colorLayer(shot, "dark");
     const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
@@ -2159,6 +2178,14 @@ input[type=text],input[type=number],input[inputmode]{
       const out = await analyzeShot(true);
       if (!priceCam || $("priceShot").disabled || !autoTimer) return;
       const key = out && out.res ? String(out.res.incl) : null;
+      // 価格はないがJANが読めた＝商品のバーコード。JANを覚えて、続けて値札の価格を待つ
+      if (!key && out && out.bc && priceCam.opts.unified && !priceCam.opts.jan && !(out.bc.code === ignoreCode.code && Date.now() < ignoreCode.until)) {
+        Object.assign(priceCam.opts, { jan: out.bc.code, fmt: out.bc.fmt, tag: false });
+        logScan(out.bc.code, out.bc.fmt); beep();
+        $("priceShot").textContent = "価格を読む"; $("priceSkip").textContent = "価格は手で入れる";
+        $("scanMsg").innerHTML = `<b>JAN ${out.bc.code} を読み取りました。続けて値札の価格を枠に入れると自動で読みます</b><br>赤い本体価格と、下の税込の行が両方入るように`;
+        autoPrev = null; autoBlockKey = null; return;
+      }
       if (!key) { autoPrev = null; autoBlockKey = null; return; } // 値札が枠から外れた＝次の値札を受け付ける
       if (key === autoBlockKey) return;
       if (!autoPrev || autoPrev.key !== key) { autoPrev = { key, bc: out.bc }; return; } // 1回目は様子見
