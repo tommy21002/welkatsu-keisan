@@ -1781,6 +1781,7 @@ input[type=text],input[type=number],input[inputmode]{
     // 商品名の欄はふだん畳む（キーボードの「次へ」で勝手に移らないように）。前回の名前があればボタンに表示
     $("nameField").hidden = true; $("nameOpen").hidden = false;
     $("nameOpen").textContent = $("fName").value ? `商品名：${$("fName").value}（変える）` : "＋ 商品名を入れる（なくてもOK）";
+    if (jan && !$("fName").value) showNameInSheet(jan);
     syncSheet();
     $("backdrop").hidden = false; $("sheet").hidden = false;
     fitSheet();
@@ -2061,7 +2062,7 @@ input[type=text],input[type=number],input[inputmode]{
     if (!opts.inSheet) openSheet(false, jan, fmt);
     else if (draft) {
       $("backdrop").hidden = false; $("sheet").hidden = false; fitSheet();
-      if (bc && !draft.jan) { draft.jan = bc.code; $("janline").hidden = false; $("janVal").textContent = bc.code; $("janFmt").textContent = FMT_JA[bc.fmt] || bc.fmt; $("janHint").textContent = priceHint(bc.code, bc.fmt); }
+      if (bc && !draft.jan) { draft.jan = bc.code; $("janline").hidden = false; $("janVal").textContent = bc.code; $("janFmt").textContent = FMT_JA[bc.fmt] || bc.fmt; $("janHint").textContent = priceHint(bc.code, bc.fmt); if (!$("fName").value) showNameInSheet(bc.code); }
     }
     if (!draft || skipped) { if (draft) setTimeout(() => $("fPrice").focus(), 60); return; }
     const ro = $("readout"); ro.hidden = false;
@@ -2120,6 +2121,29 @@ input[type=text],input[type=number],input[inputmode]{
   $("scanClose").addEventListener("click", () => { $("scanAdded").hidden = true; });
 
   // ---- 読めたら確認なしでカゴへ（自信がある・上限内の時だけ）→ そのまま次の商品へ ----
+  // ---- JANから商品名（Yahoo!ショッピング検索をGASの中継で引く。IDはGASの中だけ。結果は端末に覚える） ----
+  const NAME_API = "https://script.google.com/macros/s/AKfycbynniRGQNiGKGV7_X5FwADDuNfVXkDayMe3lkNBGfrgzw-Yhz61oeCYnXtlLA4aPcpo/exec";
+  const namePending = {};
+  function lookupName(jan) {
+    if (!jan || !/^\d{8,14}$/.test(jan)) return Promise.resolve("");
+    S.names = S.names || {};
+    if (typeof S.names[jan] === "string" && S.names[jan]) return Promise.resolve(S.names[jan]);
+    if (namePending[jan]) return namePending[jan];
+    namePending[jan] = fetch(NAME_API + "?jan=" + jan).then(r => r.json()).then(j => {
+      const n = j && j.ok && typeof j.name === "string" ? j.name.slice(0, 60) : "";
+      if (n) { S.names[jan] = n; save(); }
+      return n;
+    }).catch(() => "").finally(() => { delete namePending[jan]; });
+    return namePending[jan];
+  }
+  function showNameInSheet(jan) { // 追加画面：商品名が空なら、調べた名前を入れる
+    lookupName(jan).then(n => {
+      if (!n || !draft || draft.jan !== jan || $("fName").value) return;
+      $("fName").value = n; $("nameOpen").textContent = `商品名：${n}（変える）`;
+    });
+  }
+  window.__lookupName = lookupName;
+
   let lastAdded = null;
   function tryAutoAdd(res, bc) {
     const opts = priceCam ? priceCam.opts : null;
@@ -2143,6 +2167,11 @@ input[type=text],input[type=number],input[inputmode]{
     } else if (opts.jan) { ignoreCode = { code: opts.jan, until: Date.now() + 3000 }; stopPriceCam(); startScan(); } // 商品のJAN→価格の流れ：次の商品のバーコードへ（同じ商品は3秒読まない）
     else { try { $("video").play(); } catch (e) {} $("priceShot").disabled = false; $("scanMsg").innerHTML = "<b>次の値札を枠に入れてください（自動で読みます）</b><br>終わったら「閉じる」"; }
     $("scanAddedText").textContent = msg; $("scanAdded").hidden = false; $("scanUndo").disabled = false;
+    if (jan && !item.name) lookupName(jan).then(n => { // 商品名はあとから届いたら入れる
+      if (!n || item.name) return;
+      item.name = n; if (S.memo[jan]) S.memo[jan].name = n; save(); render();
+      if (lastAdded && lastAdded.item === item) $("scanAddedText").textContent = `「${n}」` + msg;
+    });
     return true;
   }
   $("scanUndo").onclick = () => {
