@@ -2021,6 +2021,97 @@ input[type=text],input[type=number],input[inputmode]{
   }
   window.__parseTag = parseTag;
 
+  // ---- まとめ値札（黄色い地＋赤い箱に黄色い字で「3点 300円 / 324.00円」）2026-11-21 ----
+  // 黄色い地が広く、赤がべったり塗られた箱がある時だけ「まとめ値札」とみなし、箱の中の黄色い字を読む
+  function matomeBox(src) {
+    const W = src.width, H = src.height, p = src.getContext("2d").getImageData(0, 0, W, H).data;
+    let yel = 0; const col = new Uint32Array(W), top = new Int32Array(W).fill(-1), bot = new Int32Array(W).fill(-1);
+    for (let i = 0; i < W * H; i++) {
+      const r = p[i * 4], g = p[i * 4 + 1], b = p[i * 4 + 2];
+      if (r > 170 && g > 140 && b < 130 && g - b > 60) yel++;
+      if (r - Math.max(g, b) > 50 && r > 110) { const X = i % W, Y = (i / W) | 0; col[X]++; if (top[X] < 0) top[X] = Y; bot[X] = Y; }
+    }
+    if (yel / (W * H) < 0.04) return null;
+    // 列ごとに「赤が上下にどれだけ広がるか」を見る。箱の列は大きな数字が通っても上下の赤が残るので高く出る
+    // （左の「128」のような赤い字は数字の高さしかないので入らない）。赤がまばらな列は除く
+    const span = x => (top[x] < 0 ? 0 : (col[x] >= (bot[x] - top[x] + 1) * 0.2 ? bot[x] - top[x] + 1 : 0));
+    let mx = 0, peak = 0; for (let x = 0; x < W; x++) { const s = span(x); if (s > mx) { mx = s; peak = x; } }
+    if (mx < H * 0.08) return null;
+    const th = mx * 0.75; let x0 = peak, x1 = peak;
+    const near = (x, d) => { for (let k = 1; k <= 6; k++) { const q = x + d * k; if (q >= 0 && q < W && span(q) >= th) return true; } return false; };
+    while (x0 > 0 && (span(x0 - 1) >= th || near(x0 - 1, -1))) x0--;
+    while (x1 < W - 1 && (span(x1 + 1) >= th || near(x1 + 1, 1))) x1++;
+    const bw = x1 - x0 + 1; if (bw < W * 0.15) return null;
+    let y0 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) {
+      let n = 0; for (let x = x0; x <= x1; x++) { const i = (y * W + x) * 4, r = p[i], g = p[i + 1], b = p[i + 2]; if (r - Math.max(g, b) > 50 && r > 110) n++; }
+      if (n > bw * 0.35) { if (y0 < 0) y0 = y; y1 = y; }
+    }
+    if (y0 < 0 || (y1 - y0) < H * 0.05) return null;
+    // 箱の中の黄色い字を「黒い字・白い地」にして切り出す（小さい時は2倍に）
+    const bh = y1 - y0 + 1, k = bw < 700 ? 2 : 1, c = document.createElement("canvas"); c.width = bw * k; c.height = bh * k;
+    const cx = c.getContext("2d"); cx.imageSmoothingEnabled = true; cx.drawImage(src, x0, y0, bw, bh, 0, 0, bw * k, bh * k);
+    const d = cx.getImageData(0, 0, c.width, c.height), q = d.data; let on = 0;
+    for (let i = 0; i < c.width * c.height; i++) {
+      const r = q[i * 4], g = q[i * 4 + 1], b = q[i * 4 + 2], hit = r > 150 && g > 120 && b < 150 && g - b > 40;
+      const v = hit ? 0 : 255; q[i * 4] = q[i * 4 + 1] = q[i * 4 + 2] = v; if (hit) on++;
+    }
+    const ratio = on / (c.width * c.height); if (ratio < 0.03 || ratio > 0.6) return null;
+    cx.putImageData(d, 0, 0); return { canvas: c, box: { x0, y0, x1, y1 } };
+  }
+  // 箱の一部を切り出す（割合で指定）
+  function cutRel(C, a, b, c, d, k = 1) {
+    const sw = Math.max(1, Math.round(C.width * (c - a))), sh = Math.max(1, Math.round(C.height * (d - b)));
+    const o = document.createElement("canvas"); o.width = sw * k; o.height = sh * k;
+    o.getContext("2d").drawImage(C, C.width * a, C.height * b, sw, sh, 0, 0, sw * k, sh * k); return o;
+  }
+  // 左上の「3点」の「3」だけを切り出す：上半分で、左から最初に出てくる字のかたまり（「点」とはすき間で分かれる）
+  function countPart(C) {
+    const W = C.width, H = Math.round(C.height * 0.45), d = C.getContext("2d").getImageData(0, 0, W, H).data, ink = new Uint16Array(W);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4] < 128) ink[x]++;
+    let s = -1, e = -1, gap = 0; const runs = [];
+    for (let x = 0; x < W; x++) {
+      if (ink[x] > H * 0.03) { if (s < 0) s = x; e = x; gap = 0; }
+      else if (s >= 0 && ++gap > W * 0.02) { runs.push([s, e]); s = -1; }
+    }
+    if (s >= 0) runs.push([s, e]);
+    const r = runs.find(([a, b]) => b - a > W * 0.03); if (!r) return null;
+    const m = Math.round(W * 0.02), x0 = Math.max(0, r[0] - m), x1 = Math.min(W, r[1] + m);
+    const o = document.createElement("canvas"); o.width = x1 - x0; o.height = H; o.getContext("2d").drawImage(C, x0, 0, x1 - x0, H, 0, 0, x1 - x0, H); return o;
+  }
+  // 「個数」「まとめ価格」「税込」の読み取り文字から決める（純粋関数）
+  // nText＝左上の個数、pText＝箱全体（大きな本体価格）、xText＝下の帯（税込）。税込が計算と一致したら自信あり
+  function parseMatome(nText, pText, xText) {
+    const ints = s => (String(s || "").match(/\d[\d,]*/g) || []).map(t => parseInt(t.replace(/,/g, ""), 10));
+    const n = ints(nText).find(v => v >= 2 && v <= 20);
+    const Ps = ints(pText).filter(v => v >= 10 && v <= 99999 && v !== n);
+    if (!n || !Ps.length) return null;
+    const digits = (String(xText || "") + " " + String(pText || "")).replace(/[^0-9]/g, "");
+    let best = null;
+    Ps.forEach(P => {
+      const c8 = fix2(P * 1.08).replace(".", ""), c10 = fix2(P * 1.10).replace(".", "");
+      const rate = digits.includes(c10) && !digits.includes(c8) ? 10 : 8, sure = digits.includes(rate === 10 ? c10 : c8);
+      if (!best || (sure && !best.sure) || (sure === best.sure && P > best.P)) best = { P, rate, sure };
+    });
+    const total = +fix2(best.P * (1 + best.rate / 100));
+    return { hon: best.P, rate: best.rate, incl: +fix2(total / n), qty: n, total, sure: best.sure, matome: true };
+  }
+  // まとめ値札の箱を3か所に分けて読む（1回で読むと小さい「3点」「324.00」を落とすため）
+  async function readMatome(w, C) {
+    const rec = async (img, psm) => { await w.setParameters({ tessedit_pageseg_mode: psm }); return (await w.recognize(img)).data.text; };
+    try {
+      await w.setParameters({ tessedit_char_whitelist: "0123456789.," }); // まとめ値札に「%」は無い（「2」を「%」と読み違えるため外す）
+      const np = countPart(C);
+      let nText = np ? await rec(np, "10") : "";
+      if (np && !/\d/.test(nText)) nText = await rec(np, "8");
+      const pText = await rec(C, "6"), xText = await rec(cutRel(C, 0.4, 0.7, 1, 1, C.width < 1200 ? 2 : 1), "7");
+      window.__lastMatome = { nText, pText, xText }; // 試験・調べ物用（読んだ生の文字）
+      return parseMatome(nText, pText, xText);
+    } finally { await w.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "0123456789.,%" }); } // 普通の値札の読み方に戻す
+  }
+  window.__parseMatome = parseMatome;
+  window.__matomeBox = matomeBox;
+
   let priceCam = null; // { stream, opts }
   function setScanMode(mode) {
     const pm = mode === "price";
@@ -2066,7 +2157,12 @@ input[type=text],input[type=number],input[inputmode]{
     }
     if (!draft || skipped) { if (draft) setTimeout(() => $("fPrice").focus(), 60); return; }
     const ro = $("readout"); ro.hidden = false;
-    if (res) {
+    if (res && res.matome) {
+      draft.tax = "incl"; $("fPrice").value = res.incl; draft.qty = res.qty;
+      ro.textContent = `まとめ値札から読みました：${res.qty}点 本体 ${yen(res.hon)}円 × ${res.rate}% ＝ 税込 ${yen2(res.total)}円 → 1個 ${yen2(res.incl)}円 × ${res.qty}個。`
+        + (res.sure ? "" : `税率は自信なし：値札が${res.rate === 8 ? 10 : 8}%なら打ち直してください。`)
+        + `${res.qty}個そろえない時は、1個の値段に打ち直してください。`;
+    } else if (res) {
       draft.tax = "incl"; $("fPrice").value = res.incl;
       ro.textContent = res.hon
         ? `値札から読みました：本体 ${yen(res.hon)}円 × ${res.rate}% ＝ 税込 ${yen2(res.incl)}円。` + (res.sure ? "値札と同じか確かめてください。"
@@ -2149,7 +2245,7 @@ input[type=text],input[type=number],input[inputmode]{
     const opts = priceCam ? priceCam.opts : null;
     if (!opts || opts.inSheet || !res || !res.sure || !res.hon) return false;
     const jan = opts.jan || (bc && bc.code) || "", memo = jan && S.memo[jan];
-    const item = { name: (memo && memo.name) || "", unit: res.incl, qty: 1, tax: "incl", jan };
+    const item = { name: (memo && memo.name) || "", unit: res.incl, qty: res.qty || 1, tax: "incl", jan };
     if (judge(totalOf(basket().items.concat([item]))) === "ng") return false; // 上限を超える時は確認画面で選んでもらう
     if (bc && !opts.jan) logScan(bc.code, bc.fmt);
     basket().items.push(item); if (jan) S.memo[jan] = { name: item.name, unit: item.unit, tax: "incl" };
@@ -2157,7 +2253,8 @@ input[type=text],input[type=number],input[inputmode]{
     try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
     const t = totalOf(basket().items), st = judge(t);
     setTimeout(monoeyeFlash, 0);
-    const msg = `カゴ${S.cur + 1}に ${yen2(item.unit)}円 を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
+    const what = item.qty > 1 ? `${yen2(item.unit)}円×${item.qty}個（${item.qty}点まとめ）` : `${yen2(item.unit)}円`;
+    const msg = `カゴ${S.cur + 1}に ${what} を入れました（合計 ${yen(t)}円・${{ ok: "OK", warn: "ほぼ上限", ng: "NG" }[st] || ""}）`;
     if (opts.unified) { // 最初の待ち受けに戻る（同じ商品のJANは3秒読まない）
       if (opts.jan) ignoreCode = { code: opts.jan, until: Date.now() + 3000 };
       Object.assign(opts, { jan: "", fmt: "", tag: true });
@@ -2190,7 +2287,10 @@ input[type=text],input[type=number],input[inputmode]{
       return { res: null, bc: (await decodeShot(grabFrame(0))) || (await decodeShot(grabFull())) };
     }
     const bc = wantJan ? await decodeShot(grabFrame(0)) : null;
-    const w = await ocrWarm(), dark = colorLayer(shot, "dark");
+    const w = await ocrWarm();
+    const mt = matomeBox(shot); // まとめ値札なら、赤い箱の中の黄色い字を読む
+    if (mt) { const r = await readMatome(w, mt.canvas); if (r) return { res: r, bc }; }
+    const dark = colorLayer(shot, "dark");
     const rt = red.ratio > 0.003 ? (await w.recognize(red.canvas)).data.text : "";
     const dt = (await w.recognize(rt && red.box ? belowRed(dark.canvas, red.box) : dark.canvas)).data.text;
     return { res: parseTag(rt, dt), bc };
@@ -2206,7 +2306,7 @@ input[type=text],input[type=number],input[inputmode]{
     try {
       const out = await analyzeShot(true);
       if (!priceCam || $("priceShot").disabled || !autoTimer) return;
-      const key = out && out.res ? String(out.res.incl) : null;
+      const key = out && out.res ? out.res.incl + "x" + (out.res.qty || 1) : null;
       // 価格はないがJANが読めた＝商品のバーコード。JANを覚えて、続けて値札の価格を待つ
       if (!key && out && out.bc && priceCam.opts.unified && !priceCam.opts.jan && !(out.bc.code === ignoreCode.code && Date.now() < ignoreCode.until)) {
         Object.assign(priceCam.opts, { jan: out.bc.code, fmt: out.bc.fmt, tag: false });
