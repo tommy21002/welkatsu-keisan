@@ -1217,6 +1217,7 @@ input[type=text],input[type=number],input[inputmode]{
 .sheet .preview small{font-size:12px}
 .sheet-act button{height:46px;font-size:16px}
 .sheet-act.three #cancelBtn{height:38px;font-size:14px}
+.sheet .name-open{justify-self:start;min-height:34px;padding:4px 12px;font-size:13px;font-weight:700;border:1.5px dashed var(--line-strong);background:transparent;color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* キーボード表示中: 補足の文字を隠してさらに詰める */
 .sheet.kb{padding-bottom:8px}
 .sheet.kb #janHint,.sheet.kb .preview small{display:none}
@@ -1471,8 +1472,9 @@ input[type=text],input[type=number],input[inputmode]{
         <div class="step"><button type="button" id="qMinus" aria-label="1個減らす">−</button><output id="qOut">1</output><button type="button" id="qPlus" aria-label="1個増やす">＋</button></div>
       </div>
     </div>
-    <label class="field" for="fName"><span>商品名（なくてもOK）</span>
-      <input id="fName" type="text" autocomplete="off" placeholder="例：シャンプー 詰替">
+    <button type="button" class="name-open" id="nameOpen">＋ 商品名を入れる（なくてもOK）</button>
+    <label class="field" for="fName" id="nameField" hidden><span>商品名（なくてもOK）</span>
+      <input id="fName" type="text" autocomplete="off" placeholder="例：シャンプー 詰替" enterkeyhint="done">
     </label>
     <div class="preview" id="preview" data-state="ok"></div>
     <div class="sheet-act">
@@ -1701,6 +1703,9 @@ input[type=text],input[type=number],input[inputmode]{
       const ro = $("readout"); ro.hidden = false;
       ro.textContent = "値札の価格を入れてください。";
     }
+    // 商品名の欄はふだん畳む（キーボードの「次へ」で勝手に移らないように）。前回の名前があればボタンに表示
+    $("nameField").hidden = true; $("nameOpen").hidden = false;
+    $("nameOpen").textContent = $("fName").value ? `商品名：${$("fName").value}（変える）` : "＋ 商品名を入れる（なくてもOK）";
     syncSheet();
     $("backdrop").hidden = false; $("sheet").hidden = false;
     fitSheet();
@@ -1754,6 +1759,13 @@ input[type=text],input[type=number],input[inputmode]{
       nb.hidden = true; ab.textContent = "追加する"; ab.className = "primary"; act.classList.remove("three");
     }
   }
+  $("nameOpen").onclick = () => { $("nameOpen").hidden = true; $("nameField").hidden = false; const f = $("fName"); f.focus(); f.select(); fitSheet(); };
+  // キーボードの「完了/Enter」: 上限内ならそのまま追加。NGの時は追加せずキーボードを閉じてボタンを選んでもらう
+  ["fPrice", "fName"].forEach(id => $(id).addEventListener("keydown", e => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    if (!$("addBtn").disabled && $("nextBtn").hidden) $("addBtn").click(); else e.target.blur();
+  }));
   $("fPrice").addEventListener("input", () => {
     const f = $("fPrice"), c = cleanPrice(f.value);
     if (c !== f.value) f.value = c; // 小数第3位以降・数字以外は打てないようにする
